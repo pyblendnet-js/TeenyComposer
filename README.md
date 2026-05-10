@@ -1,5 +1,5 @@
 # Teeny Composer
-![Teeny Composer screenshot]("/teeny composer.png")
+![Teeny Composer screenshot](/teeny-composer.png)
 
 ## About
 Teeny Composer is a simple midi file editor for creation or editing of simple tunes.
