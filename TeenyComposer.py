@@ -1,0 +1,940 @@
+# Inspired by Source - https://stackoverflow.com/a/24136884 Posted by Marcin, modified by community. See post 'Timeline' for change history Retrieved 2026-04-29, License - CC BY-SA 3.0
+
+from tkinter import filedialog, simpledialog
+from tkinter import ttk
+import tkinter as tk # this is in python 3.4. For python 2.x import Tkinter
+from PIL import Image, ImageTk
+import math, os
+import midoMidi
+#import fluidsynth
+import fluid
+
+parser = midoMidi.midiParser()
+synth = fluid.fluid()
+instruments = synth.set_font()  #currently loads GeneralUserGS.sf2
+
+def getNoteName(midi_note):
+  oc = math.floor(midi_note / 12)
+  st = midi_note % 12
+  nms = "CCDDEFFGGAAB"
+  nm = nms[st] + str(oc)
+  if is_sharp(midi_note):
+    nm += "#"
+  return nm
+#enddef
+
+def is_on_stave_line(midi_note):
+    treble_lines = [64, 67, 71, 74, 77]
+    bass_lines = [45, 48, 52, 55, 59]
+    return midi_note in treble_lines or midi_note in bass_lines
+#enddef
+
+def is_sharp(midi_note):
+  sharp_notes = (1,3,6,8,10)
+  st = midi_note % 12
+  return st in sharp_notes
+
+class TeenyComposer(tk.Tk):
+
+    min_note = 59   #B3
+    max_note = 83   #B4
+    wide = 1000
+    high = 800
+    start_note_high = 140
+    end_note_high = 80
+    note_height = 20
+    half_note_height = 10
+    note_y_pos = {}
+    first_note_line_y = int(high/2)
+    last_note_line_y = int(high/2)
+    pos_note = []
+    x_scale = 1
+    start_tm = 0
+    end_tm = 20000
+    edit_track = 0
+    edit_vel = 64
+    note_start_x = 120
+    track_colors = ("black","blue","green","red","cyan","orange","grey")
+    play_step = 1  #1 millisecond per tick
+    playing = False
+    play_index = []
+    play_line = None
+    time = 0
+    auto_pan = True
+    
+    render = None
+
+    def __init__(self):
+        tk.Tk.__init__(self)
+        self.title("TeenyComposer")
+        self.x = self.y = 0
+        self.canvas = tk.Canvas(self, width=self.wide, height=self.high, cursor="cross")
+        self.canvas.pack(side="top", fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_move)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
+        self.canvas.bind("<ButtonPress-2>", self.on_mouse_press)
+        self.canvas.bind("<B2-Motion>", self.on_mouse_move)
+        self.canvas.bind("<ButtonRelease-2>", self.on_mouse_release)
+        self.canvas.bind("<ButtonPress-3>", self.on_mouse_press)
+        self.canvas.bind("<B3-Motion>", self.on_mouse_move)
+        self.canvas.bind("<ButtonRelease-3>", self.on_mouse_release)
+        #load = Image.open("media_icons/play.png")
+        #print(load)
+        #render = ImageTk.PhotoImage(load)
+        #self.render = tk.PhotoImage("play.png")
+        #print(self.render)
+        #  , image=self.render, compound='left'
+        self.play_btn = tk.Button(self, text='Play', bd='4', command=self.play_tune)
+        self.play_btn.place(x=10,y=0)
+        self.stop_btn = tk.Button(self, text='Stop', bd='4', command=self.stop_tune)
+        self.stop_btn.place(x=80,y=0)
+        self.stave_btn = tk.Button(self, text='Stave', bd='4', command=self.toggle_stave)
+        self.stave_btn.place(x=150,y=0)
+        lbl = tk.Label(self, text="Midi:")
+        lbl.place(x=260,y=0)
+        self.load_btn = tk.Button(self, text='Load', bd='4', command=self.load_midi)
+        self.load_btn.place(x=300,y=0)
+        self.save_btn = tk.Button(self, text='Save', bd='4', command=self.save_midi)
+        self.save_btn.place(x=380,y=0)
+        self.saveas_btn = tk.Button(self, text='SaveAs', bd='4', command=self.saveas_midi)
+        self.saveas_btn.place(x=460,y=0)
+        lbl = tk.Label(self, text="Track:")
+        lbl.place(x=655,y=0)
+        self.load_track_btn = tk.Button(self, text='Load', bd='4', command=self.load_track)
+        self.load_track_btn.place(x=700,y=0)
+        self.saveas_track_btn = tk.Button(self, text='SaveAs', bd='4', command=self.saveas_track)
+        self.saveas_track_btn.place(x=780,y=0)
+        btn = tk.Button(self, text='Quit', bd='4', command=self.destroy)
+        btn.place(x=900,y=0)
+        self.left_btn = tk.Button(self, text='<', bd='4', command=self.shift_left)
+        self.left_btn.place(x=self.note_start_x,y=self.high-50)
+        self.right_btn = tk.Button(self, text='>', bd='4', command=self.shift_right)
+        self.right_btn.place(x=self.wide-50,y=self.high-50)
+        self.max_up_btn = tk.Button(self, text='^', bd='4', command=self.shift_max_up)
+        self.max_up_btn.place(x=0,y=80)
+        self.max_down_btn = tk.Button(self, text='v', bd='4', command=self.shift_max_down)
+        self.max_down_btn.place(x=50,y=80)
+        lbl = tk.Label(self, text="Transpose:")
+        lbl.place(x=120,y=100)
+        self.transpose_up_btn = tk.Button(self, text='^', bd='4', command=self.transpose_up)
+        self.transpose_up_btn.place(x=200,y=80)
+        self.transpose_down_btn = tk.Button(self, text='v', bd='4', command=self.transpose_down)
+        self.transpose_down_btn.place(x=250,y=80)
+        self.auto_pan_var = tk.IntVar()
+        self.auto_pan_var.set(self.auto_pan);
+        self.auto_pan_checkbox = ttk.Checkbutton(self, text='autopan', variable=self.auto_pan_var,\
+          command=self.auto_pan_checkbox_change)
+        self.auto_pan_checkbox.place(x=self.wide/2+150,y=100) 
+        self.min_up_btn = tk.Button(self, text='^', bd='4', command=self.shift_min_up)
+        self.min_up_btn.place(x=0,y=self.high-50)
+        self.min_down_btn = tk.Button(self, text='v', bd='4', command=self.shift_min_down)
+        self.min_down_btn.place(x=50,y=self.high-50)
+        lbl = tk.Label(self, text="Speed:")
+        lbl.place(x=self.wide/2-100,y=100)
+        self.add_track_btn = tk.Button(self, text='+', bd='4', command=self.faster)
+        self.add_track_btn.place(x=self.wide/2-50,y=80)
+        self.add_track_btn = tk.Button(self, text='-', bd='4', command=self.slower)
+        self.add_track_btn.place(x=self.wide/2,y=80)
+        self.speed_lbl = tk.Label(self, text=f"{self.play_step:0.2f} mS/tick")
+        self.speed_lbl.place(x=self.wide/2+50,y=100)
+        lbl = tk.Label(self, text="Track:")
+        lbl.place(x=10,y=50)
+        self.track_combo = ttk.Combobox(self, values = parser.track_nms,width=10)
+        self.track_combo.place(x=60,y=50)
+        self.track_combo.current(0)
+        self.track_combo.bind("<<ComboboxSelected>>",self.track_combo_change)
+        lbl = tk.Label(self, text="Program:")
+        lbl.place(x=170,y=50)
+        mw = 4
+        if len(instruments) == 0:
+          try:
+            with open("general_midi.txt") as f:
+              programs = f.readlines()
+            #endwith
+            for i in range(128):
+              programs[i] = str(i) + "=" + programs[i][programs[i].index(" ")+1:-1]
+              if len(programs[i]) > mw:
+                mw = len(programs[i])
+              #endif
+            #endfor
+          except:
+            for i in range(128):
+              programs.append(str(i))
+            #endfor 
+          #endtry
+        else:
+          programs = list(instruments)
+          for p in programs:
+            if len(p) > mw:
+              mw = len(p)
+            #endif
+          #endfor            
+        #endif
+        #print(programs)
+        self.track_program_combo = ttk.Combobox(self, values = programs,width=mw)
+        self.track_program_combo.place(x=240,y=50)
+        self.track_program_combo.current(0)
+        self.track_program_combo.bind("<<ComboboxSelected>>",self.track_program_combo_change)
+        self.track_enable_var = tk.IntVar()
+        self.track_enable_var.set(parser.track_enable[0]);
+        self.track_enable_checkbox = ttk.Checkbutton(self, text="Enable", variable=self.track_enable_var,\
+          command=self.track_enable_checkbox_change)
+        self.track_enable_checkbox.place(x=440,y=50)
+        #self.track_enable_checkbox.bind("<<ComboboxSelected>>",command=self.track_enable_checkbox_change)
+        self.add_track_btn = tk.Button(self, text='Add Track', bd='4', command=self.add_track)
+        self.add_track_btn.place(x=550,y=50)
+        self.add_track_btn = tk.Button(self, text='Del Track', bd='4', command=self.del_track)
+        self.add_track_btn.place(x=660,y=50)
+        self.add_track_btn = tk.Button(self, text='Name Track', bd='4', command=self.nm_track)
+        self.add_track_btn.place(x=770,y=50)
+        
+        #self.bind("<Configure>", self.on_window_resize) - too many false triggers
+        self.bind("<Key>", self.key_handler)
+        self.rect = None
+
+        self.start_x = None
+        self.start_y = None
+
+        self.stave = False
+        parser.duration = self.end_tm
+        self.refresh()
+    #enddef
+    
+    def key_handler(self,event):
+        print("Keyboard event:",event) 
+    
+    def on_window_resize(self, event):  # not used as gets false events
+        print("Resize event:",event)
+        width = event.width
+        height = event.height
+        print(f"Window resized to {width}x{height}")
+        self.refresh()
+    
+    def toggle_stave(self):
+        self.stave = not self.stave
+        self.refresh()
+    #enddef_synth.
+        
+    def refresh(self):
+        self.canvas.delete("all")
+        if self.stave:
+          self.draw_staves()
+          self.stave_btn.configure(text ="Piano")
+        else:
+          self.draw_piano()
+          self.stave_btn.configure(text="Stave")
+        #endif
+        y_tm = self.first_note_line_y - 20
+        s_str = "%0.1f"%(self.start_tm,)
+        e_str = "%0.1f"%(self.end_tm,)
+        self.canvas.create_text(self.note_start_x,y_tm,\
+         text=s_str,anchor="w",justify="center",fill="black")
+        self.canvas.create_text(self.wide-100,y_tm,text= e_str,anchor="w",justify="right",fill="black")
+        if self.start_tm == 0:
+          self.left_btn.config(state=tk.DISABLED)
+        else:
+          self.left_btn.config(state=tk.NORMAL)
+        #endif
+        #draw position rect
+        bx1 = self.note_start_x+80
+        bx2 = self.wide-80
+        by1 = self.high-self.end_note_high+30
+        by2 = self.high-10
+        self.canvas.create_rectangle(bx1,by1,bx2,by2)
+        bw = bx2-bx1
+        if parser.duration > 0:
+          px1 = min(bx2,self.start_tm/parser.duration*bw + bx1)
+          px2 = min(bx2,self.end_tm/parser.duration*bw + bx1) 
+          self.canvas.create_rectangle(px1+4,by1+4,px2-4,by2-4,fill="black")
+        #end
+        x = self.note_start_x + (self.time-self.start_tm)*self.x_scale
+        y1 = self.first_note_line_y
+        if x > self.note_start_x and x < self.width:
+          y2 = self.last_note_line_y
+        else:
+          y2 = y1 
+        #endif 
+        self.play_line = self.canvas.create_line(x,y1,x,y2,width=2,fill="red")
+    #enddef
+        
+    def draw_staves(self):
+        nr = 0
+        for n in range(self.min_note,self.max_note+1):
+          if not is_sharp(n):
+            nr += 1
+          #endif
+        #endfor
+        hnr = nr>>1
+        
+        y = (self.high-self.start_note_high-self.end_note_high)/2 - hnr*self.note_height + self.start_note_high
+        self.first_note_line_y = y
+        self.note_y_pos = {}
+        self.pos_note = []
+
+        for n in range(self.max_note,self.min_note-1,-1):
+          ny = y - self.note_height/2
+          self.note_y_pos[n] = ny
+          self.pos_note.append((ny,n))
+          if not is_sharp(n):
+            if is_on_stave_line(n):
+              self.canvas.create_line(0,y,self.wide,y,width=2)
+            #endif
+            self.canvas.create_text((0,y+self.note_height/2),text=getNoteName(n),\
+            anchor="w",justify="left",fill="black")
+            y += self.note_height
+          #endif
+        #endfor
+        self.canvas.create_line(self.note_start_x,first_note_line_y,self.note_start_x,y,width=2)
+        self.last_note_line_y = y
+        
+        show_width = self.wide-self.note_start_x
+        tm_wide = self.end_tm - self.start_tm
+        self.x_scale = show_width/tm_wide
+        for ti,track in enumerate(parser.tracks):
+          print("Display track stave:",ti)
+          if parser.track_enable[ti]:
+            for env in track:
+              if env[1] == 0:  #ignore noteoff events
+                continue
+              if env[2] > self.end_tm:
+                break   #no point going further
+              if env[0] > self.min_note and env[0] < self.max_note and env[2] < self.end_tm and env[3] > self.start_tm:
+                #print("Show note:",env)
+                startTm = max(env[2],self.start_tm)
+                endTm = min(env[3],self.end_tm)
+                x1 = (startTm - self.start_tm)/tm_wide*show_width
+                x2 = (endTm - self.start_tm)/tm_wide*show_width
+                y = self.note_y_pos[env[0]]
+                #print("N:",y,x1,x2)
+                col = "black"
+                if is_sharp(env[0]):
+                  col = "red"
+                #endif
+                self.canvas.create_rectangle(self.note_start_x+x1,y,\
+                     self.note_start_x+x2,y+self.note_height,fill=col)
+              #endif
+            #endfor
+          #endif
+        #endfor      
+    #enddef    
+
+    def draw_piano(self):
+        nr = self.max_note - self.min_note +1
+        hnr = nr>>1
+        
+        y = (self.high-self.start_note_high-self.end_note_high)/2 - hnr*self.note_height + self.start_note_high
+        self.note_y_pos = {}
+        self.pos_note = []
+        self.first_note_line_y = y
+
+        for n in range(self.max_note,self.min_note-1,-1):
+          if n >= 0 or n < 128:
+            self.note_y_pos[n] = y
+            self.pos_note.append((y,n))
+            self.canvas.create_line(0,y,self.wide,y,width=2)
+            col = "black"
+            if is_sharp(n):
+              self.canvas.create_rectangle(0,y,100,y+self.note_height,fill="black")
+              col = "white"
+            #endif
+            self.canvas.create_text((0,y+self.note_height/2),text=getNoteName(n),\
+              anchor="w",justify="left",fill=col)
+          y += self.note_height
+        #endfor  
+        self.canvas.create_line(0,y,self.wide,y,width=2)
+        self.last_note_line_y = y
+
+        show_width = self.wide-self.note_start_x
+        if self.end_tm <= self.start_tm:  #shouldn't happen
+          self.end_tm = self.start_tm + 100
+          print("ERROR: end time < start time")
+        #end if  
+        tm_wide = self.end_tm - self.start_tm
+        self.x_scale = show_width/tm_wide
+        
+        bx = self.note_start_x - self.start_tm%parser.ticks_per_beat*self.x_scale
+        sx = parser.ticks_per_beat*self.x_scale
+        while bx < self.wide:
+          if bx > self.note_start_x:
+            self.canvas.create_line(bx,self.first_note_line_y,bx,y,width=2,fill="yellow")
+          #endif
+          bx += sx
+        #endwhile
+        self.canvas.create_line(self.note_start_x,self.first_note_line_y,self.note_start_x,y,width=4)
+        for ti,track in enumerate(parser.tracks):
+          if parser.track_enable[ti]:
+            print("Display track:",ti)
+            for env in track:
+              #print("Show note:",env)
+              if env[1] == 0:  #ignore noteoff events
+                continue
+              if env[2] > self.end_tm:
+                break   #no point going further
+              #endif
+              if env[0] > self.min_note and env[0] < self.max_note and env[2] < self.end_tm and env[3] > self.start_tm:
+                #print("Show note:",env)
+                startTm = max(env[2],self.start_tm)
+                endTm = min(env[3],self.end_tm)
+                x1 = self.note_start_x+(startTm - self.start_tm)*self.x_scale
+                x2 = self.note_start_x+(endTm - self.start_tm)*self.x_scale
+                y1 = self.note_y_pos[env[0]]
+                y2 = y1+self.half_note_height
+                y3 = y1+self.note_height
+                #print("N:",y,x1,x2)
+                if ti < len(self.track_colors):
+                  col = self.track_colors[ti]
+                else:
+                  col = "purple"
+                #endif
+                #self.canvas.create_rectangle(x1,y1,x2,y3,fill=col)
+                self.canvas.create_polygon(x1,y1,x2,y2,x2,y3,x1,y3,fill=col)
+              #endif
+            #endfor
+          #endif
+        #endfor      
+    #enddef
+    
+    def find_note(self,y):
+        for np in self.pos_note:
+          if y > np[0] and y < np[0] + self.note_height:
+            return np
+          #endif
+        #endfor
+        return None
+    #enndef
+
+    def _draw_image(self):
+         self.im = Image.open('./resource/lena.jpg')
+         self.tk_im = ImageTk.PhotoImage(self.im)
+         self.canvas.create_image(0,0,anchor="nw",image=self.tk_im)
+    #enddef    
+
+    def on_mouse_press(self, event):
+        #print(dir(event))
+        print(event)
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
+          return
+        # save mouse drag start position
+        self.start_x = event.x
+        self.start_y = event.y
+        self.start_typ = event.num
+        np = self.find_note(event.y)
+        if np:
+          if event.num != 3:
+            self.start_y = np[0]
+            print(np)
+          note = np[1]
+          if self.stave:
+            col = "green"
+            if is_sharp(np[1]) and event.num == 2:
+              col = "red"
+            else:
+              note -= 1
+            #endif  
+          else:
+            col = "lightblue"
+          #endif
+        #endif  
+        # create rectangle if not yet exist
+        #if not self.rect:
+        if event.num == 1:
+          self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, fill=col)
+        elif event.num == 3:
+          self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1)
+        #endif
+    #enddef    
+
+    def on_mouse_move(self, event):
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
+          return
+        curX, curY = (event.x, event.y)
+        # expand rectangle as you drag the mouse
+        if self.start_typ == 1 and event.x > self.start_x:
+          self.canvas.coords(self.rect, self.start_x, self.start_y, curX, self.start_y + self.note_height)
+        elif self.start_typ == 2:  #drag view
+          dx = event.x - self.start_x
+          dy = event.y - self.start_y
+          #print(dx,dy)
+          self.start_x = event.x
+          tm_wide = self.end_tm - self.start_tm
+          dtm = dx/(self.wide - self.note_start_x)*tm_wide
+          self.start_tm = max(0,self.start_tm - dtm)
+          self.end_tm = self.start_tm + tm_wide
+          dnote = int(dy/self.note_height)
+          if abs(dnote) > 0:
+            self.start_y = event.y
+            note_high = self.max_note - self.min_note
+            #print("Drag notes by ",dnote)
+            self.min_note = max(0,self.min_note+dnote)
+            self.max_note = self.min_note + note_high
+          #endif
+          self.refresh()
+        elif self.start_typ == 3 or self.start_x > event.x:
+          self.canvas.coords(self.rect, self.start_x, self.start_y, curX, curY)
+        #endif
+    #enddef 
+    
+    def get_stave_note(self,y):
+      n = -1
+      for sn in range(self.max_note,self.min_note-1,1):
+        dy = y - self.note_y_pos[sn]
+        if dy > 0 and dx < self.note_high:
+          n  = sn
+          if event.num == 1 and self.is_sharp(n):  #this is natural
+            n -= 1
+          #endif  
+        #endif
+      #endfor
+      return n
+    #enddef
+    
+    def get_piano_note(self,y):
+      n = self.max_note - int((y - self.first_note_line_y)/self.note_height)
+      return n
+    #enddef
+
+    def on_mouse_release(self, event):
+        print(self.max_note,self.min_note)
+        print(self.note_y_pos.keys())
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
+          return
+        dx = event.x - self.start_x
+        dy = event.y - self.start_y
+        print("****************",dx,dy)
+        if abs(dx) < 2 and abs(dy) < self.note_height:
+          
+          self.time = (event.x - self.note_start_x)/self.x_scale + self.start_x
+          if self.play_line:
+            y1 = self.first_note_line_y
+            y2 = self.last_note_line_y 
+            self.canvas.coords(self.play_line, event.x, y1, event.x, y2)
+          #endif
+          self.play_index = parser.find_index(self.time)
+          return
+        #endif  
+        if event.num == 3:
+          zoom_tm = True
+          zoom_note = True
+          if abs(dx) > abs(dy)*2:
+            zoom_note = False
+          elif abs(dy) > abs(dx)*2:  
+            zoom_tm = False
+          #endif 
+          if zoom_tm: 
+            if dx < 0:
+              print("zoom out tm")
+              self.scale_tm()
+            else:
+              print("zoom in tm")
+              current_tm_wide = self.end_tm - self.start_tm
+              stave_wide = self.wide - self.note_start_x
+              new_tm_wide = current_tm_wide * dx / stave_wide
+              self.start_tm += (self.start_x - self.note_start_x)*current_tm_wide/stave_wide
+              self.end_tm = self.start_tm + new_tm_wide
+              print(f"Show tm from: {self.start_tm} to {self.end_tm}")
+            #endif
+          #endif
+          if zoom_note:
+            if dy < 0:
+              print("zoom out note")
+              self.scale_notes()
+            else:  
+              current_notes_high = self.max_note - self.min_note
+              print(self.note_y_pos)
+              print("Max Note:",self.max_note," Min Note:",self.min_note)
+              print("y max:",self.first_note_line_y)
+              print("y_min:",self.last_note_line_y)
+              stave_high = self.last_note_line_y - self.first_note_line_y
+              new_notes_high = current_notes_high * dy / stave_high
+              print("Stave high:", stave_high)
+              print("New notes high:",new_notes_high)
+              self.max_note -= math.floor((self.start_y - self.first_note_line_y)*current_notes_high/stave_high)
+              self.min_note = math.floor(self.max_note - new_notes_high)
+              print(f"Show notes from: {self.min_note} to {self.max_note}")
+            #endif
+          #endif
+          self.canvas.delete(self.rect)
+        #elif event.num == 2:  #drag view - all done in mouse move, but if this proves too slow then restore
+        #  tm_wide = self.end_tm - self.start_tm
+        #  dtm = dx/(self.wide - self.note_start_x)*tm_wide
+        #  self.start_tm = max(0,self.start_tm + dtm)
+        #  self.end_tm = self.start_tm + tm_wide
+        #  note_high = self.max_note - self.min_note
+        #  dnote = int(dy/self.note_height)
+        #  if abs(dnote) > 0:
+        #    self.min_note = max(0,self.min_note+dnote)
+        #    self.max_note = self.min_note + note_high
+        #  #endif
+        elif event.num == 1:
+          if self.stave:  #bit more complicated to work out what note for stave view
+            n = self.get_stave_note(self.start_y)
+          else:
+            n = self.get_piano_note(self.start_y)  
+          #endif
+          if n < 0 or n >= 128:  #midi limits
+            return
+          #endif
+          print("Marked start note:", n)
+          if n > self.max_note:
+            self.max_note = n
+          elif n < self.min_note:
+            self.min_note = n
+          #endif
+          tm_wide = self.end_tm - self.start_tm
+          stave_wide = self.wide - self.note_start_x
+          print("TmWide:",self.end_tm,"-",self.start_tm,"=",tm_wide)
+          print("Stave wide:",stave_wide)
+          start_tm = self.start_tm + (self.start_x - self.note_start_x)*tm_wide/stave_wide
+          end_tm = self.start_tm + (event.x - self.note_start_x)*tm_wide/stave_wide
+          print("Start-end:",start_tm,end_tm)
+          if start_tm > end_tm:  #back swipe means erase
+            if self.stave:  #bit more complicated to work out what note for stave view
+              end_n = self.get_stave_note(event.y)
+            else:
+              end_n = self.get_piano_note(event.y)  
+            #endif
+            if end_n < 0 or end_n >= 128:  #midi limits
+              return
+            #endif
+            print("Marked end note:", end_n)
+            if n > self.max_note:
+              self.max_note = end_n
+            elif n < self.min_note:
+              self.min_note = end_n
+            #endif
+            parser.remove_notes(n,end_n,end_tm,start_tm,self.edit_track)  #note start end reversed 
+            if self.rect:
+              self.canvas.delete(self.rect)
+            #endif
+          else:
+            if self.edit_track >= len(parser.tracks):  # shouldn't happen
+              print("Edit track beyond existing tracks")
+              return -1
+            #endif  
+            i = parser.mod_note(n,start_tm,end_tm,self.edit_track,self.edit_vel)
+            if i < 0:
+              print("Insert noteon at ",start_tm)
+              parser.insert_note(n,start_tm,end_tm,self.edit_track,self.edit_vel)
+            #endif
+          #endif
+        #endif
+        self.refresh()
+    #enddef 
+    
+    def load_midi(self):
+      self.filename = filedialog.askopenfilename(filetypes = (("Midi","*.mid"),("All files","*.*")))
+      if self.filename:
+          # Read and print the content (in bytes) of the file.
+          print(self.filename)
+          parser.load(self.filename)
+          parser.scan()
+          self.title("TeenyComposer = " + self.filename)
+      else:
+          print("No file selected.")
+          return
+      #endif
+      if len(parser.track_nms) > 0:
+        self.track_combo.config(values = parser.track_nms)
+        self.track_combo.current(0)
+        self.track_program_combo.current(parser.track_program[0])
+      #endif
+      self.scale_tm()
+      self.scale_notes()
+      self.test_shift_up_down_limits()
+      #self.refresh() - included in 
+    #enddef
+    
+    def load_track(self):
+      self.filename = filedialog.askopenfilename(filetypes = (("Track","*.trk"),("All files","*.*")))
+      if not self.filename:
+          print("No file selected.")
+          return
+      #endif
+      # Read and print the content (in bytes) of the file.
+      print("Loading:",self.filename)
+      fp = os.path.splitext(os.path.basename(self.filename))  #split into name and 
+      np = fp[0].split("_")  #get track part of name
+      track_name = np[-1]
+      print("Track:",track_name)
+      parser.load_track(self.filename,track_name)  #will place at end of existing tracks
+      self.title("TeenyComposer = " + self.filename)
+      if len(parser.track_nms) > 0:
+        self.track_combo.config(values = parser.track_nms)
+        self.track_combo.current(0)
+        self.track_program_combo.current(parser.track_program[0])
+      #endif
+      self.scale_tm()
+      self.scale_notes()
+      self.test_shift_up_down_limits()
+      #self.refresh() - included in 
+    #enddef
+    
+    def save_midi(self):
+      parser.save(self.filename)
+    #enddef
+    
+    def saveas_midi(self):
+      self.filename = filedialog.asksaveasfilename(filetypes = (("Midi","*.mid"),("All files","*.*")))
+      if self.filename:
+          # Read and print the content (in bytes) of the file.
+          print(self.filename)
+          parser.save(self.filename)
+          self.title("TeenyComposer = " + self.filename)
+      else:
+          print("No file selected.")
+      #endif
+    #enddef
+    
+    def saveas_track(self):
+      track_name = self.track_combo.get()
+      if len(self.filename) > 0: 
+        track_name = os.path.splitext(os.path.basename(self.filename))[0] + "_" + track_name
+        trackfilename = filedialog.asksaveasfilename(initialfile = track_name,filetypes = (("Track","*.trk"),("All files","*.*")))
+      if trackfilename:
+          # Read and print the content (in bytes) of the file.
+          print(trackfilename)
+          parser.save_track(trackfilename,self.track_combo.current())
+          if self.filename == "":
+            self.filename = trackfilename.split("_")[0] + ".mid"  #assumes no underscore in base path
+            self.title("TeenyComposer = " + self.filename)
+          #endif  
+      else:
+          print("No file selected.")
+      #endif
+    #enddef
+    
+    def scale_tm(self):
+      self.start_tm = 0
+      self.end_tm = max(100,parser.duration)
+    #enddef
+    
+    def scale_notes(self):
+      parser.test_all_range()
+      dn = parser.max_note - parser.min_note
+      spare = (self.high - self.start_note_high - self.end_note_high)/self.note_height - dn
+      ts = int(spare/2)
+      self.max_note = parser.max_note + ts
+      self.min_note = parser.min_note - ts
+      print("Min note:",self.min_note)
+      print("Max note:",self.max_note)
+      self.test_shift_up_down_limits()
+    #enddef  
+    
+    def shift_left(self):
+      if self.start_tm == 0:
+        return
+      dt = self.end_tm-self.start_tm
+      self.start_tm -= dt*0.5
+      if self.start_tm < 0:
+        self.start_tm = 0
+      #endif
+      self.end_tm = self.start_tm + dt
+      self.refresh()
+    #enddef
+    
+    def shift_right(self):
+      dt = self.end_tm-self.start_tm
+      self.start_tm += dt*0.5
+      self.end_tm = self.start_tm + dt
+      self.refresh()
+    #enddef
+    
+    def shift_max_up(self):
+      self.max_note += 1
+      self.test_shift_up_down_limits()
+    #enddef
+    
+    def shift_max_down(self):
+      self.max_note -= 1
+      self.test_shift_up_down_limits()
+    #enddef
+    
+    def shift_min_up(self):
+      self.min_note += 1
+      self.test_shift_up_down_limits()
+    #enddef
+    
+    def shift_min_down(self):
+      self.min_note -= 1
+      self.test_shift_up_down_limits()
+    #enddef
+    
+    def test_shift_up_down_limits(self):
+      if self.max_note >= 127:
+        self.max_note = 127
+        self.max_up_btn.config(state=tk.DISABLED)
+      else:
+        self.max_up_btn.config(state=tk.NORMAL)
+      #endif
+      if self.max_note <= self.min_note+4:
+        self.max_note = self.min_note+4
+        self.max_down_btn.config(state=tk.DISABLED)
+      else:
+        self.max_down_btn.config(state=tk.NORMAL)
+      #endif
+      if self.min_note >= self.max_note-4:
+        self.min_note = self.max_note-4
+        self.min_up_btn.config(state=tk.DISABLED)
+      else:
+        self.min_up_btn.config(state=tk.NORMAL)
+      #endif
+      if self.max_note < 0:
+        self.max_note = 0
+        self.min_down_btn.config(state=tk.DISABLED)
+      else:
+        self.min_down_btn.config(state=tk.NORMAL)
+      #endif
+      self.refresh()
+    #enddef  
+  
+    def add_track(self):
+      new_track = "Track "+str(len(parser.track_nms)+1)
+      self.edit_track = len(parser.track_nms)     
+      parser.add_track(new_track) 
+      self.track_combo.config(values = parser.track_nms)
+      self.track_combo.current(len(parser.track_nms)-1)
+      self.track_program_combo.current(0)
+    #enddef
+    
+    def del_track(self):
+      ti = self.track_combo.current()
+      print(f"Preparing to delete track: {ti} of {len(parser.track_nms)} track_nms")
+      if ti < 0:
+        return
+      if len(parser.track_nms) < 2:
+        print("Track delete abort: There must be at least one track")
+        return
+      #endif  
+      parser.delete_track(ti)
+      self.refresh()
+      if ti >= len(parser.track_nms):
+        ti -= 1  #go to previous otherwise next
+      self.track_combo.config(values = parser.track_nms)
+      self.track_combo.current(ti)
+      self.track_program_combo.current(parser.track_program[ti])
+    #enddef
+    
+    def nm_track(self):
+      nm = simpledialog.askstring("Input", "Enter track name:")
+      if not nm:
+        return
+      #endif
+      if len(nm) == 0:
+        return
+      #endif
+      parser.track_nms[self.track_combo.current()] = nm
+      self.track_combo.config(values = parser.track_nms)
+    #enddef
+    
+    def track_combo_change(self,ev):
+      print("Change:",ev)
+      self.edit_track = self.track_combo.current()
+      self.track_program_combo.current(parser.track_program[self.edit_track])
+      print("Track " + self.track_combo.get() + "selected")
+      self.track_enable_var.set(parser.track_enable[self.edit_track])
+    #enddef
+    
+    def track_program_combo_change(self,ev):
+      print("Change:",ev)
+      parser.track_program[self.track_combo.current()]= self.track_program_combo.current()
+      print("Track " + self.track_combo.get() + " program changed to:" + self.track_program_combo.get())
+    #enddef
+    
+    def track_enable_checkbox_change(self):
+      print("Enable changed for:",self.track_combo.current()," to ",self.track_enable_var.get())
+      parser.track_enable[self.track_combo.current()] = self.track_enable_var.get();
+      self.refresh()
+    #enddef
+    
+    def auto_pan_checkbox_change(self):
+      auto_pan = self.auto_pan_var.get();
+    #enddef
+    
+    def play_tune(self):
+      if self.playing:
+        self.playing = False
+        self.play_btn.config(text="play")
+      else:
+        self.play_index = [0]*len(parser.tracks)
+        #print(parser.track_program)
+        for ti,tp in enumerate(parser.track_program):
+          synth.set_program(ti,tp)
+        #endfor
+        self.play_btn.config(text="pause")
+        self.playing = True
+        self.play_next()
+    #enddef
+    
+    def stop_tune(self):
+      self.playing = False
+      self.play_btn.config(text="play")
+      #self.canvas.delete(self.play_line)
+      #self.play_line = None
+      self.time = 0  #in milliseconds
+    #enddef
+    
+    def play_next(self):
+      #print("Cursor callback:",self.time)
+      x = self.note_start_x + (self.time-self.start_tm)*self.x_scale
+      y1 = self.first_note_line_y
+      y2 = self.last_note_line_y
+      if self.auto_pan:
+        if x < self.note_start_x or x > self.wide:
+          self.end_tm = self.time + self.end_tm - self.start_tm
+          self.start_tm = self.time
+          x = self.note_start_x
+          self.refresh()
+        #endif
+      elif x < self.note_start_x and x >= self.wide:
+        y2 = y1 
+      #endif
+      #print("Cursor x:",x,y1,y2)
+      if self.play_line: 
+        self.canvas.coords(self.play_line, x, y1, x, y2)
+      for ti,track in enumerate(parser.tracks):
+        if not parser.track_enable[ti]:
+          continue
+        while self.play_index[ti] < len(track):
+          env = track[self.play_index[ti]]
+          if env[2] > self.time:
+            break
+          #endif
+          print(self.play_index[ti]," Playing event:",env)
+          synth.play(env,ti)  #channel = track for the moment  
+          self.play_index[ti] += 1  
+        #endwhile
+      #endfor
+      if self.play_index[ti] >= len(track):
+        self.stop_tune() #reached end
+      elif self.playing:
+        self.time += self.play_step  # in milliseconds
+        self.after(1,self.play_next)  #poll every millisecond
+      #endif
+    #enddef
+    
+    def faster(self):
+      self.play_step *= 1.2
+      self.speed_lbl.config(text= f"{self.play_step:0.2f} mS/tick")
+    #enddef
+    
+    def slower(self):
+      self.play_step /= 1.2
+      self.speed_lbl.config(text= f"{self.play_step:0.2f} mS/tick")
+    #enddef
+    
+    def transpose_up(self):
+      parser.transpose(1)
+      self.refresh()
+    #enddef
+    
+    def transpose_down(self):
+      parser.transpose(-1)
+      self.refresh()
+    #enddef
+    
+#endclass
+
+if __name__ == "__main__":
+    app = TeenyComposer()
+    app.mainloop()
