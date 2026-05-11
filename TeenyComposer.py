@@ -8,6 +8,7 @@ import math, os
 import midoMidi
 #import fluidsynth
 import fluid
+from datetime import datetime
 
 parser = midoMidi.midiParser()
 synth = fluid.fluid()
@@ -19,7 +20,10 @@ def getNoteName(midi_note):
   nms = "CCDDEFFGGAAB"
   nm = nms[st] + str(oc)
   if is_sharp(midi_note):
-    nm += "#"
+    nm += "# ="
+  else:
+    nm += "_ ="
+  nm += str(midi_note)     
   return nm
 #enddef
 
@@ -36,6 +40,7 @@ def is_sharp(midi_note):
 
 class TeenyComposer(tk.Tk):
 
+    filename = ""  #nothing loaded yet
     min_note = 59   #B3
     max_note = 83   #B4
     wide = 1000
@@ -61,6 +66,8 @@ class TeenyComposer(tk.Tk):
     play_line = None
     time = 0
     auto_pan = True
+    note_playing = -1
+    rect = None
     
     render = None
 
@@ -116,11 +123,11 @@ class TeenyComposer(tk.Tk):
         self.max_down_btn = tk.Button(self, text='v', bd='4', command=self.shift_max_down)
         self.max_down_btn.place(x=50,y=80)
         lbl = tk.Label(self, text="Transpose:")
-        lbl.place(x=120,y=100)
+        lbl.place(x=220,y=100)
         self.transpose_up_btn = tk.Button(self, text='^', bd='4', command=self.transpose_up)
-        self.transpose_up_btn.place(x=200,y=80)
+        self.transpose_up_btn.place(x=300,y=80)
         self.transpose_down_btn = tk.Button(self, text='v', bd='4', command=self.transpose_down)
-        self.transpose_down_btn.place(x=250,y=80)
+        self.transpose_down_btn.place(x=350,y=80)
         self.auto_pan_var = tk.IntVar()
         self.auto_pan_var.set(self.auto_pan);
         self.auto_pan_checkbox = ttk.Checkbutton(self, text='autopan', variable=self.auto_pan_var,\
@@ -250,7 +257,7 @@ class TeenyComposer(tk.Tk):
         #end
         x = self.note_start_x + (self.time-self.start_tm)*self.x_scale
         y1 = self.first_note_line_y
-        if x > self.note_start_x and x < self.width:
+        if x > self.note_start_x and x < self.wide:
           y2 = self.last_note_line_y
         else:
           y2 = y1 
@@ -353,13 +360,19 @@ class TeenyComposer(tk.Tk):
         tm_wide = self.end_tm - self.start_tm
         self.x_scale = show_width/tm_wide
         
-        bx = self.note_start_x - self.start_tm%parser.ticks_per_beat*self.x_scale
+        bi = self.start_tm%parser.ticks_per_beat
+        bx = self.note_start_x - bi*self.x_scale
         sx = parser.ticks_per_beat*self.x_scale
         while bx < self.wide:
           if bx > self.note_start_x:
-            self.canvas.create_line(bx,self.first_note_line_y,bx,y,width=2,fill="yellow")
+            if (bi % parser.denominator) == 0:
+              col = "orange"
+            else:
+              col = "yellow"
+            self.canvas.create_line(bx,self.first_note_line_y,bx,y,width=2,fill=col)
           #endif
           bx += sx
+          bi += 1
         #endwhile
         self.canvas.create_line(self.note_start_x,self.first_note_line_y,self.note_start_x,y,width=4)
         for ti,track in enumerate(parser.tracks):
@@ -396,7 +409,7 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def find_note(self,y):
-        for np in self.pos_note:
+        for np in self.pos_note:  #scan (y,n) values
           if y > np[0] and y < np[0] + self.note_height:
             return np
           #endif
@@ -412,54 +425,46 @@ class TeenyComposer(tk.Tk):
 
     def on_mouse_press(self, event):
         #print(dir(event))
-        print(event)
-        if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
+        #print(event)
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y:
           return
         # save mouse drag start position
         self.start_x = event.x
         self.start_y = event.y
         self.start_typ = event.num
         np = self.find_note(event.y)
-        if np:
-          if event.num != 3:
-            self.start_y = np[0]
-            print(np)
-          note = np[1]
-          if self.stave:
-            col = "green"
-            if is_sharp(np[1]) and event.num == 2:
-              col = "red"
-            else:
-              note -= 1
-            #endif  
-          else:
-            col = "lightblue"
-          #endif
-        #endif  
-        # create rectangle if not yet exist
-        #if not self.rect:
-        if event.num == 1:
-          self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, fill=col)
-        elif event.num == 3:
-          self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1)
+        if not np:
+          return
         #endif
-    #enddef    
+        note = np[1]
+        if event.x < self.note_start_x:
+          synth.set_program(self.edit_track,parser.track_program[self.edit_track])
+          synth.play(note,64,self.edit_track)
+          print(f"Play {note} on")
+          self.note_playing = note
+          return
+        #endif
+        if event.num == 1:
+          self.start_y = np[0]  #note vertical position
+          #print(np)
+        #endif  
+   #enddef    
 
     def on_mouse_move(self, event):
         if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
           return
-        curX, curY = (event.x, event.y)
-        # expand rectangle as you drag the mouse
-        if self.start_typ == 1 and event.x > self.start_x:
-          self.canvas.coords(self.rect, self.start_x, self.start_y, curX, self.start_y + self.note_height)
-        elif self.start_typ == 2:  #drag view
-          dx = event.x - self.start_x
-          dy = event.y - self.start_y
+        dx = event.x - self.start_x
+        dy = event.y - self.start_y
+        #print("****************",dx,dy)
+        if abs(dx) < 2 and abs(dy) < self.note_height:
+          return
+        #endif
+        if self.start_typ == 2:  #drag view
           #print(dx,dy)
           self.start_x = event.x
           tm_wide = self.end_tm - self.start_tm
           dtm = dx/(self.wide - self.note_start_x)*tm_wide
-          self.start_tm = max(0,self.start_tm - dtm)
+          self.start_tm = max(0,int(self.start_tm - dtm))
           self.end_tm = self.start_tm + tm_wide
           dnote = int(dy/self.note_height)
           if abs(dnote) > 0:
@@ -470,8 +475,33 @@ class TeenyComposer(tk.Tk):
             self.max_note = self.min_note + note_high
           #endif
           self.refresh()
-        elif self.start_typ == 3 or self.start_x > event.x:
-          self.canvas.coords(self.rect, self.start_x, self.start_y, curX, curY)
+          return
+        #endif
+        if not self.rect:
+          if self.stave:
+            col = "green"
+            if is_sharp(np[1]) and event.num == 2:
+              col = "red"
+            else:
+              note -= 1
+            #endif  
+          else:
+            col = "lightblue"
+          #endif
+          # create rectangle if not yet exist
+          if self.start_typ == 1:
+            self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, 1, 1, fill=col)
+          elif self.start_typ == 3:
+            self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, 1, 1)  #no fill
+          #endif
+        else:
+          curX, curY = (event.x, event.y)
+          # expand rectangle as you drag the mouse
+          if self.start_typ == 1 and event.x > self.start_x:
+            self.canvas.coords(self.rect, self.start_x, self.start_y, curX, self.start_y + self.note_height)
+          elif self.start_typ == 3 or self.start_x > event.x:
+            self.canvas.coords(self.rect, self.start_x, self.start_y, curX, curY)
+          #endif
         #endif
     #enddef 
     
@@ -495,15 +525,24 @@ class TeenyComposer(tk.Tk):
     #enddef
 
     def on_mouse_release(self, event):
-        print(self.max_note,self.min_note)
-        print(self.note_y_pos.keys())
-        if event.y < self.first_note_line_y or event.y > self.last_note_line_y or event.x < self.note_start_x:
+        #print(self.max_note,self.min_note)
+        #print(self.note_y_pos.keys())
+        if self.rect:
+          self.canvas.delete(self.rect)
+          self.rect = None
+        #endif
+        if self.start_x < self.note_start_x and self.note_playing >= 0:
+            synth.play(self.note_playing,0,self.edit_track)
+            print(f"Play {self.note_playing} off")
+            self.note_playing = -1
+            return
+        #endif
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y:
           return
         dx = event.x - self.start_x
         dy = event.y - self.start_y
-        print("****************",dx,dy)
+        #print("****************",dx,dy)
         if abs(dx) < 2 and abs(dy) < self.note_height:
-          
           self.time = (event.x - self.note_start_x)/self.x_scale + self.start_x
           if self.play_line:
             y1 = self.first_note_line_y
@@ -585,8 +624,8 @@ class TeenyComposer(tk.Tk):
           stave_wide = self.wide - self.note_start_x
           print("TmWide:",self.end_tm,"-",self.start_tm,"=",tm_wide)
           print("Stave wide:",stave_wide)
-          start_tm = self.start_tm + (self.start_x - self.note_start_x)*tm_wide/stave_wide
-          end_tm = self.start_tm + (event.x - self.note_start_x)*tm_wide/stave_wide
+          start_tm = int(self.start_tm + (self.start_x - self.note_start_x)*tm_wide/stave_wide)
+          end_tm = int(self.start_tm + (event.x - self.note_start_x)*tm_wide/stave_wide)
           print("Start-end:",start_tm,end_tm)
           if start_tm > end_tm:  #back swipe means erase
             if self.stave:  #bit more complicated to work out what note for stave view
@@ -607,7 +646,7 @@ class TeenyComposer(tk.Tk):
             if self.rect:
               self.canvas.delete(self.rect)
             #endif
-          else:
+          else:  #add or modify note
             if self.edit_track >= len(parser.tracks):  # shouldn't happen
               print("Edit track beyond existing tracks")
               return -1
@@ -626,9 +665,11 @@ class TeenyComposer(tk.Tk):
       self.filename = filedialog.askopenfilename(filetypes = (("Midi","*.mid"),("All files","*.*")))
       if self.filename:
           # Read and print the content (in bytes) of the file.
-          print(self.filename)
+          #print(self.filename)
           parser.load(self.filename)
           parser.scan()
+          self.play_step = parser.tempo / parser.ticks_per_beat / 1000
+          self.speed_lbl.config(text= f"{self.play_step:0.2f} mS/tick")
           self.title("TeenyComposer = " + self.filename)
       else:
           print("No file selected.")
@@ -678,7 +719,7 @@ class TeenyComposer(tk.Tk):
       self.filename = filedialog.asksaveasfilename(filetypes = (("Midi","*.mid"),("All files","*.*")))
       if self.filename:
           # Read and print the content (in bytes) of the file.
-          print(self.filename)
+          #print(self.filename)
           parser.save(self.filename)
           self.title("TeenyComposer = " + self.filename)
       else:
@@ -688,12 +729,18 @@ class TeenyComposer(tk.Tk):
     
     def saveas_track(self):
       track_name = self.track_combo.get()
-      if len(self.filename) > 0: 
-        track_name = os.path.splitext(os.path.basename(self.filename))[0] + "_" + track_name
-        trackfilename = filedialog.asksaveasfilename(initialfile = track_name,filetypes = (("Track","*.trk"),("All files","*.*")))
+      if len(self.filename) > 0:
+        fnm = os.path.splitext(os.path.basename(self.filename))[0]
+        if fnm.endswith(track_name):
+          track_name = fnm
+        else: 
+          track_name = fnm + "_" + track_name
+      else:
+        track_name = datetime.now().strftime("%Y%02m%02d-%02H%02M%02S_") + track_name
+      trackfilename = filedialog.asksaveasfilename(initialfile = track_name,filetypes = (("Track","*.trk"),("All files","*.*")))
       if trackfilename:
           # Read and print the content (in bytes) of the file.
-          print(trackfilename)
+          #print(trackfilename)
           parser.save_track(trackfilename,self.track_combo.current())
           if self.filename == "":
             self.filename = trackfilename.split("_")[0] + ".mid"  #assumes no underscore in base path
@@ -706,7 +753,7 @@ class TeenyComposer(tk.Tk):
     
     def scale_tm(self):
       self.start_tm = 0
-      self.end_tm = max(100,parser.duration)
+      self.end_tm = max(20000,parser.duration + 4*parser.ticks_per_beat)
     #enddef
     
     def scale_notes(self):
@@ -901,7 +948,7 @@ class TeenyComposer(tk.Tk):
             break
           #endif
           print(self.play_index[ti]," Playing event:",env)
-          synth.play(env,ti)  #channel = track for the moment  
+          synth.play(env[0],env[1],ti)  #channel = track for the moment  
           self.play_index[ti] += 1  
         #endwhile
       #endfor

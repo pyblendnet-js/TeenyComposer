@@ -1,5 +1,5 @@
 import sys, math  #python3 -m pip install mido
-from mido import Message, MidiFile, MidiTrack
+from mido import Message, MetaMessage, MidiFile, MidiTrack
 
 class midiParser():
 
@@ -11,13 +11,22 @@ class midiParser():
   track_program = [0,]
   track_enable = [True,]
   verbose = False
-  ticks_per_beat = 480   #1000 would be one beat per second at default tempo
+  ticks_per_beat = 480
+  tempo =600000    # uSec per per quarter note
+  numerator = 4
+  denominator = 4
+  clocks_per_click = 24
+  notated_32nd_notes_per_beat = 8
+  
+  #1000 would be one beat per second at default tempo
   
   def load(self,fid):
     self.midi_file = MidiFile(fid)
     print(f"MIDI Type: {self.midi_file.type}")
     self.ticks_per_beat = self.midi_file.ticks_per_beat
     print(f"Ticks per Beat: {self.ticks_per_beat}")
+    #self.temp = self.midi_file.tempo
+    #print(f"Tempo: {self.tempo} uSec/quarter note")
     print(dir(self.midi_file))
   #enddef
   
@@ -28,6 +37,12 @@ class midiParser():
       track.name = track_nm
       print("Saving track:",track_nm)
       mid.tracks.append(track)
+      if ti == 0:  #first track
+        track.append(MetaMessage('set_tempo', tempo=self.tempo, time=0))
+        track.append(MetaMessage('time_signature',numerator = self.numerator,\
+            denominator =self.denominator , clocks_per_click =self.clocks_per_click , \
+             notated_32nd_notes_per_beat = self.notated_32nd_notes_per_beat), time=0)
+      #endif  
       track.append(Message('program_change', program=self.track_program[ti], time=0))
       ltm = 0
       for env in self.tracks[ti]:
@@ -66,10 +81,18 @@ class midiParser():
           for msg in track:
               # Print each message and its time delta
               mstr = str(msg)
-              if self.verbose:
+              if self.verbose or msg.is_meta:
                 print(msg)
+              #print(msg.type)
               if msg.type == "program_change":  #let us assume that each track has only one program
                 self.track_program[-1] = msg.program
+              elif msg.type == "set_tempo":
+                self.tempo = msg.tempo
+              elif msg.type == "time_signature":
+                self.numerator = msg.numerator
+                self.denominator = msg.denominator
+                self.clocks_per_click = msg.clocks_per_click
+                self.notated_32nd_notes_per_beat = msg.notated_32nd_notes_per_beat
               elif msg.type == "note_on" or msg.type == "note_off":
                 #print(msg.type)
                 n = msg.note
@@ -148,9 +171,9 @@ class midiParser():
       #endwhile       
       while l:
         lp = l.strip().split(",")
-        print(lp)
+        #print(lp)
         nenv = (int(lp[0]),int(lp[1]),int(lp[2]),int(lp[3]))
-        print(nenv)
+        #print(nenv)
         if nenv[2] > self.duration:
           self.duration = nenv[2]
         inserted = False
@@ -269,13 +292,12 @@ class midiParser():
       #endif
       if env[0] != n:  #not the same pitch
         continue
-      if env[1] > 0:  # this is a noteon event
-        if env[3] < start_tm or env[2] > end_tm:
-          #this event ends before our new note starts or
-          #this event doesn't start before end of our new note ends
-          print("Skip")  #so we can keep looking
-          continue
-        #endif
+      if env[1] == 0:  # this is a noteoff event
+        continue
+      if env[3] < start_tm or env[2] > end_tm:
+        #this event ends before our new note starts or
+        #this event doesn't start before end of our new note ends
+        continue
       #endif
       print("Existing note found:",env, " at ", i)
       return i
@@ -302,6 +324,7 @@ class midiParser():
     track = self.tracks[ti]
     note_env = (n,vel,start_tm,end_tm)
     print("Insert ",note_env," into track:",ti)
+    self.duration = max(self.duration,end_tm)
     self.check_range(note_env[0])
     i = 0
     track = self.tracks[ti]
@@ -317,13 +340,13 @@ class midiParser():
         if note_env[1] == 0:  #vel already set to 0 so this is noteoff
           return  #note off has already been inserted
         note_env = (n,0,end_tm,start_tm)   #note reversal of time for noteoff
-        self.duration = max(self.duration,end_tm)
         #keep going and look for place to add note off
       #endif
       i += 1
     #endwhile
+    #this noteon or note off is going onto the end
     self.tracks[ti].append(note_env)
-    if note_env[1] != 0:  #vel is not zero
+    if note_env[1] != 0:  #vel is not zero yet, so need to add note off
       note_env = (note_env[0],0,note_env[3],note_env[2])   #note reversal of time for noteoff
       self.tracks[ti].append(note_env)
     #endif
