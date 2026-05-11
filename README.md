@@ -17,7 +17,7 @@ Teeny Composer is a simple midi file editor for creation or editing of simple tu
 Locate everything in a folder. Assuming you have python3 installed, then for the first time, run python3 TeenyComposer.py from a terminal and you'll see what dependancy packages are missing. Use pip to install.
 
 The fluidsynth runtime can be installed using apt-get on linux, but is also available on Windows and Mac.
-On windows, you need to locate the bin directory from the downloaded zip in C:/tool/fluidsynth
+On windows, you need to locate the bin directory from the downloaded zip in C:/tools/fluidsynth
 
 Download GeneralUser-GS.sf2 from one of the many sources and locate in the same folder.
 The GeneralUser-GS.txt file is a list of that soundfonts contents with bank and numbers.
