@@ -18,6 +18,11 @@ class midiParser():
   clocks_per_click = 24
   notated_32nd_notes_per_beat = 8
   
+  edit_history = []  #record (track,event_index,type,env) where type=(0=addition,1=deletion,3=modification delete)
+  undo_index = 0
+  rec_disable = False  #used to prevent undo history being lost during redo or over written with undo
+
+  
   #1000 would be one beat per second at default tempo
   
   def load(self,fid):
@@ -28,6 +33,8 @@ class midiParser():
     #self.temp = self.midi_file.tempo
     #print(f"Tempo: {self.tempo} uSec/quarter note")
     print(dir(self.midi_file))
+    self.edit_history = []
+    self.undo_index =0
   #enddef
   
   def save(self,fid):
@@ -115,7 +122,7 @@ class midiParser():
                   print(tm,n)
               #endif
           #endfor
-        #endif
+        #endifinsert_note
     #endfor
     print(f"{sharps} sharps")
     print("Min note:",self.min_note)
@@ -132,7 +139,7 @@ class midiParser():
       for env in track:
         f.write(f"{env[0]},{env[1]},{env[2]},{env[3]}\n")  #note, vel, start_tm, end_tm
       #endfor
-    #endwith
+    #endwithinsert_note
   #enddef
   
   def load_track(self,fid,track_nm,track_nr=-1):
@@ -238,30 +245,104 @@ class midiParser():
     self.track_enable.append(True)
   #enddef
   
+  def rec_history(self,edit):
+    if self.rec_disable:  #happens when doing redo so that history isn't erased
+      return
+    print("Record history:",edit)
+    env = edit[3]
+    if env[1] == 0:  #don't record noteoff events
+      return
+    if self.undo_index > 0 and self.undo_index < len(self.edit_history):
+      self.edit_history = self.edit_history[:-self.undo_index]
+      self.undo_index = 0
+    #endif
+    self.edit_history.append(edit)
+  #enddef
+  
+  def undo(self):
+    print("undo index:",self.undo_index)
+    print(self.edit_history)
+    self.rec_disable = True
+    if self.undo_index < len(self.edit_history):
+      self.undo_index += 1
+      edit = self.edit_history[-self.undo_index]
+      track = self.tracks[edit[0]]
+      env = edit[3]
+      if edit[2] == 0:  #insert
+        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
+        print("Remove at:",edit[1],j)
+        if j > 0:
+          del track[j]
+        del track[edit[1]]
+      elif edit[2] == 1:  #deletion
+        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      elif edit[2] == 2:  #modification
+        nenv = track[edit[1]]
+        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
+        if j > 0:
+          del(track[j])
+        del track[edit[1]]
+        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      #endif
+    #endif
+    self.rec_disable = False
+  #enddef
+  
+  def redo(self):
+    print("undo index:",self.undo_index)
+    print(self.edit_history)
+    self.rec_disable = True
+    if self.undo_index > 0:
+      edit = self.edit_history[-self.undo_index]
+      self.undo_index -= 1
+      track = self.tracks[edit[0]]
+      env = edit[3]
+      if edit[2] == 0:  #insert type
+        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      elif edit[2] == 1:  #deletion
+        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
+        print("Remove at:",edit[1],j)
+        if j > 0:
+          del track[j]
+        del track[edit[1]]
+      elif edit[2] == 2:  #modification
+        nenv = track[edit[1]]
+        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
+        if j > 0:
+          del(track[j])
+        del track[edit[1]]
+        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      #endif
+    #endif  
+    self.rec_disable = False
+  #enddef         
+  
   def remove_notes(self,start_n,end_n,start_tm,end_tm,ti):
     track = self.tracks[ti]
     del_cnt = 0
     for n in range(start_n,end_n):
       print("Remove note:",n," for ",start_tm," to ",end_tm)
-      del_cnt += self.remove_note(n,start_tm,end_tm,track)
+      del_cnt += self.remove_note(n,start_tm,end_tm,ti)
     #endfor
     print("Removed ",del_cnt,"notes")
     return del_cnt
   #enddef
     
-  def remove_note(self,n,start_tm,end_tm,track):
+  def remove_note(self,n,start_tm,end_tm,ti):
+    track = self.tracks[ti]
     del_cnt = 0
     while(True):
       i = self.find_existing_note(n,start_tm,end_tm,track)
       if i < 0:
         break
-      j = self.find_matching_noteoff(n,i,track)
-      print("Erase note at ", i)
-      del track[i]
+      j = self.find_matching_noteoff(i+1,n,track)
+      print("Erase note at ", i,j)
+      self.rec_history((ti,i,1,tuple(track[i])))
       del_cnt += 1
       if j >= 0:
-        del track[j]
+        del track[j]  #must erase noteoff first
       #endif
+      del track[i]
     #endwhile
     self.test_all_range()
     return del_cnt                    
@@ -270,15 +351,14 @@ class midiParser():
   def mod_note(self,n,start_tm,end_tm,ti=0,vel=64):
     track = self.tracks[ti]
     i = self.find_existing_note(n,start_tm,end_tm,track)
-    if i >= 0:
-      j = self.find_matching_noteoff(n,i,track)
-      track[i] = (n,vel,start_tm,end_tm)
-      if j >= 0:
-        track[j] = (n,0,end_tm,start_tm)  #note reversal of times for noteoff event
-      self.duration = max(self.duration,end_tm)
-      return i
+    if i >= 0:  #found one
+      self.rec_history((ti,i,1,tuple(track[i])))
+      j = self.find_matching_noteoff(i+1,n,track)
+      del track[j]     
+      del track[i]
+      self.insert_note(n,start_tm,end_tm,ti,vel)
     #endif
-    return -1
+    return i
   #enddef 
   
   def find_existing_note(self,n,start_tm,end_tm,track):
@@ -306,8 +386,11 @@ class midiParser():
   #enddef 
   
   def find_matching_noteoff(self,start_i,n,track):
-    for i in range(start_i,len(track)):
+    print("Track:",track)
+    print("Start_i:",start_i)
+    for i in range(start_i,len(track)+1):
       env = track[i]
+      print("Testing at ",i," for noteoff:",env)
       if env[0] == n:
         if env[1] != 0:
           print("error - noteon found before note off")
@@ -333,7 +416,9 @@ class midiParser():
       if env[2] > note_env[2]:  #this event past intended event
         if i < len(track):
           self.tracks[ti].insert(i,note_env)
+          self.rec_history((ti,i,0,tuple(note_env)))  #0 type is noteon
         else:
+          self.rec_history((ti,len(self.tracks[ti]),0,tuple(note_env)))
           self.tracks[ti].append(note_env)
         #endif
         i += 1 #to allow for the inserted event
@@ -345,6 +430,7 @@ class midiParser():
       i += 1
     #endwhile
     #this noteon or note off is going onto the end
+    self.rec_history((ti,len(self.tracks[ti]),0,tuple(note_env)))
     self.tracks[ti].append(note_env)
     if note_env[1] != 0:  #vel is not zero yet, so need to add note off
       note_env = (note_env[0],0,note_env[3],note_env[2])   #note reversal of time for noteoff

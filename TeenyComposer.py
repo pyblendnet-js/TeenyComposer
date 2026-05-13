@@ -210,13 +210,25 @@ class TeenyComposer(tk.Tk):
     
     def key_handler(self,event):
         print("Keyboard event:",event) 
+        if event.char == '\x1a':  #cntrl + z
+          print("Undo")
+          parser.undo()
+          self.refresh()
+        elif event.char == '\x19': #cntrl + y
+          print("Redo")
+          parser.redo()
+          self.refresh()
+        #endif
+    #enddef
     
     def on_window_resize(self, event):  # not used as gets false events
         print("Resize event:",event)
         width = event.width
         height = event.height
         print(f"Window resized to {width}x{height}")
-        self.refresh()
+        sel
+        f.refresh()
+    #enddef
     
     def toggle_stave(self):
         self.stave = not self.stave
@@ -292,7 +304,7 @@ class TeenyComposer(tk.Tk):
             y += self.note_height
           #endif
         #endfor
-        self.canvas.create_line(self.note_start_x,first_note_line_y,self.note_start_x,y,width=2)
+        self.canvas.create_line(self.note_start_x,self.first_note_line_y,self.note_start_x,y,width=2)
         self.last_note_line_y = y
         
         show_width = self.wide-self.note_start_x
