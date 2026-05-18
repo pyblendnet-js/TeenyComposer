@@ -45,9 +45,12 @@ Left button
 - drag right on canvas to add or modify note
 - drag left over note to delete
 - single click to locate playback cursor
-Right button - drag right to indicate area to zoom.
+
+Right button
+- drag right to indicate area to zoom.
 - drag horizontal for time zoom only.
 - drag vertically for note range zoom.
+
 Middle button
 - drag to move view
 - click to set time cursor
