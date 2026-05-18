@@ -10,6 +10,10 @@ class fluid():
     self._synth.start()
   #enddef
   
+  def stop(self):
+    self._synth.system_reset()
+  #enddef
+  
   def close(self):
     self._synth.system_reset()
     self._synth.delete()
@@ -57,11 +61,11 @@ class fluid():
     #endtry  
   #enddef
   
-  def play(self, env, chan = 0):
-      if env[1] == 0:
-        self._synth.noteoff(chan,env[0])
+  def play(self, note, vel=64, chan = 0):
+      if vel == 0:
+        self._synth.noteoff(chan,note)
       else:
-        self._synth.noteon(chan,env[0],env[1])
+        self._synth.noteon(chan,note,vel)
       #endif
   #enddef
 
