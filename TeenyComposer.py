@@ -59,15 +59,21 @@ class TeenyComposer(tk.Tk):
     edit_track = 0
     edit_vel = 64
     note_start_x = 120
-    track_colors = ("black","blue","green","red","cyan","orange","grey")
+    track_colors = ("black","blue","green","orange","cyan","brown","grey")
+    select_colors = ("orange","red","yellow","blue","purple","black","red")
     play_step = 1  #1 millisecond per tick
     playing = False
     play_index = []
     play_line = None
-    time = 0
+    cursor_time = 0
+    begin_time = 0
+    fini_time = 0
     auto_pan = True
+    snap = False
     note_playing = -1
     rect = None
+    control_pressed = False
+    shift_pressed = False
     
     render = None
 
@@ -133,6 +139,11 @@ class TeenyComposer(tk.Tk):
         self.auto_pan_checkbox = ttk.Checkbutton(self, text='autopan', variable=self.auto_pan_var,\
           command=self.auto_pan_checkbox_change)
         self.auto_pan_checkbox.place(x=self.wide/2+150,y=100) 
+        self.snap_var = tk.IntVar()
+        self.snap_var.set(self.snap);
+        self.snap_checkbox = ttk.Checkbutton(self, text='snap', variable=self.snap_var,\
+          command=self.snap_checkbox_change)
+        self.snap_checkbox.place(x=self.wide/2+250,y=100) 
         self.min_up_btn = tk.Button(self, text='^', bd='4', command=self.shift_min_up)
         self.min_up_btn.place(x=0,y=self.high-50)
         self.min_down_btn = tk.Button(self, text='v', bd='4', command=self.shift_min_down)
@@ -183,21 +194,35 @@ class TeenyComposer(tk.Tk):
         self.track_program_combo.place(x=240,y=50)
         self.track_program_combo.current(0)
         self.track_program_combo.bind("<<ComboboxSelected>>",self.track_program_combo_change)
-        self.track_enable_var = tk.IntVar()
-        self.track_enable_var.set(parser.track_enable[0]);
-        self.track_enable_checkbox = ttk.Checkbutton(self, text="Enable", variable=self.track_enable_var,\
-          command=self.track_enable_checkbox_change)
-        self.track_enable_checkbox.place(x=440,y=50)
-        #self.track_enable_checkbox.bind("<<ComboboxSelected>>",command=self.track_enable_checkbox_change)
+        self.track_show_var = tk.IntVar()
+        self.track_show_var.set(parser.track_show[0]);
+        self.track_show_checkbox = ttk.Checkbutton(self, text="Show", variable=self.track_show_var,\
+          command=self.track_show_checkbox_change)
+        self.track_show_checkbox.place(x=440,y=35)
+        self.track_mute_var = tk.IntVar()
+        self.track_mute_var.set(False);
+        self.track_mute_checkbox = ttk.Checkbutton(self, text="Mute", variable=self.track_mute_var,\
+          command=self.track_mute_checkbox_change)
+        self.track_mute_checkbox.place(x=440,y=50)
+        self.track_solo_var = tk.IntVar()
+        self.track_solo_var.set(False);
+        self.track_solo_checkbox = ttk.Checkbutton(self, text="Solo", variable=self.track_solo_var,\
+          command=self.track_solo_checkbox_change)
+        self.track_solo_checkbox.place(x=440,y=65)
         self.add_track_btn = tk.Button(self, text='Add Track', bd='4', command=self.add_track)
-        self.add_track_btn.place(x=550,y=50)
+        self.add_track_btn.place(x=550,y=40)
         self.add_track_btn = tk.Button(self, text='Del Track', bd='4', command=self.del_track)
-        self.add_track_btn.place(x=660,y=50)
+        self.add_track_btn.place(x=650,y=40)
         self.add_track_btn = tk.Button(self, text='Name Track', bd='4', command=self.nm_track)
-        self.add_track_btn.place(x=770,y=50)
+        self.add_track_btn.place(x=750,y=40)
+        self.edit_track_btn = tk.Button(self, text='Edit Track', bd='4', command=self.track_edit_window)
+        self.edit_track_btn.place(x=870,y=40)
+        self.smash_btn = tk.Button(self, text='Smash', bd='4', command=self.smash)
+        self.smash_btn.place(x=800,y=90)
         
         #self.bind("<Configure>", self.on_window_resize) - too many false triggers
-        self.bind("<Key>", self.key_handler)
+        self.bind("<Key>", self.key_press)
+        self.bind("<KeyRelease>", self.key_release)
         self.rect = None
 
         self.start_x = None
@@ -205,20 +230,134 @@ class TeenyComposer(tk.Tk):
 
         self.stave = False
         parser.duration = self.end_tm
+        self.fini_time = parser.duration
         self.refresh()
     #enddef
     
-    def key_handler(self,event):
-        print("Keyboard event:",event) 
-        if event.char == '\x1a':  #cntrl + z
-          print("Undo")
-          parser.undo()
-          self.refresh()
-        elif event.char == '\x19': #cntrl + y
-          print("Redo")
-          parser.redo()
-          self.refresh()
-        #endif
+    def trim_front(self):
+        print("Trim front")
+        parser.trim_tm(self.cursor_time,True)
+        self.refresh()
+    #enddef
+    
+    def trim_rear(self):
+        print("Trim front")
+        parser.trim_tm(self.cursor_time,False)
+        self.refresh()
+    #enddef
+    
+    def octave_up(self):
+        print("octave_up")
+        parser.transpose_track(12,self.edit_track)
+        self.refresh()
+    #enddef
+    
+    def octave_dn(self):
+        print("octave_dn")
+        parser.transpose_track(-12,self.edit_track)
+        self.refresh()
+    #enddef
+    
+    def select_highest(self):
+        print("Select highest")
+        parser.top_notes(self.edit_track,int(self.overlap_var.get()))
+        self.refresh()
+    #enddef
+    
+    def invert_selection(self):
+        print("Invert selection")
+        parser.invert_selection(self.edit_track)
+        self.refresh()
+    #enddef
+    
+    def select_errors(self):
+        print("Select errors")
+        parser.select_track_errors(self.edit_track)
+        self.refresh()
+    #enddef
+    
+    def track_edit_window(self):
+        te = tk.Toplevel()
+        te.geometry("350x400") 
+        te.title("Track edits")
+        te.trim_front_btn = tk.Button(te, text='TrimFront', bd='4', command=self.trim_front)
+        te.trim_front_btn.place(x=10,y=10)
+        te.trim_front_btn = tk.Button(te, text='TrimRear', bd='4', command=self.trim_rear)
+        te.trim_front_btn.place(x=10,y=60)
+        te.octave_up_btn = tk.Button(te, text='OctaveUp', bd='4', command=self.octave_up)
+        te.octave_up_btn.place(x=10,y=110)
+        te.octave_dn_btn = tk.Button(te, text='OctaveDown', bd='4', command=self.octave_dn)
+        te.octave_dn_btn.place(x=10,y=160)
+        te.select_highest_btn = tk.Button(te, text='Highest', bd='4', command=self.select_highest)
+        te.select_highest_btn.place(x=10,y=210)
+        lbl = tk.Label(te, text="Overlap:")
+        lbl.place(x=100,y=210)
+        self.overlap_var = tk.StringVar()
+        self.overlap_var.set(str(int(parser.ticks_per_beat/4)))
+        te.overlap_entry = tk.Entry(te,textvariable=self.overlap_var)
+        te.overlap_entry.place(x=170,y=210)
+        te.invert_btn = tk.Button(te, text='Invert Selection', bd='4', command=self.invert_selection)
+        te.invert_btn.place(x=10,y=260)
+        te.select_error_btn = tk.Button(te, text='Select errors', bd='4', command=self.select_errors)
+        te.select_error_btn.place(x=10,y=310)
+        self.track_edit_window = te
+        te.bind("<Key>", self.key_press)  #keyboard works from both focus
+    #enddef
+    
+    def key_press(self,event):
+        print("Keyboard event:",event)
+        print("State:",event.state)
+        if (event.state & 4) != 0:  # 'Control' 
+          print("Control actions")
+          if event.keysym == 'z':  #cntrl + z
+            print("Undo")
+            parser.undo()
+            self.refresh()
+          elif event.keysym == 'y': #cntrl + y
+            print("Redo")
+            parser.redo()
+            self.refresh()
+          elif event.keysym == 'h':  # cntrl + h  #print history
+            parser.print_history()
+          elif event.keysym == 't':  # cntrl + t  #print track
+            parser.print_track(self.edit_track)
+          elif event.keysym == 's':  # cntrl + t  #print selection
+            parser.print_selection(self.edit_track)
+          elif event.keysym == 'c':  # cntrl + c
+            print("Copy")
+            parser.copy_selected(self.edit_track)
+          elif event.keysym == 'x':  # cntrl + x
+            print("Cut")
+            parser.cut_selected(self.edit_track)
+          elif event.keysym == 'v':  # cntrl + v
+            print("Paste")
+            parser.paste_clipboard(self.edit_track,self.cursor_time)
+            self.refresh() 
+          #endif
+        #endif 
+        if event.keysym== 'Delete':
+          print("Delete")
+          parser.delete_selected(self.edit_track)
+          self.refresh() 
+        elif event.keysym== 'Insert':
+          print("Insert - does nothing at present - maybe add beat in track")
+        elif event.keysym=='Control_L' or event.keysym=='Control_R':
+          print("Control on")
+          self.control_pressed = True          
+        elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
+          print("Shift on")
+          self.shift_pressed = True          
+        #endif        
+    #enddef
+    
+    def key_release(self,event):
+        if event.keysym=='Control_L' or event.keysym=='Control_R':
+          print("Control off")
+          self.control_pressed = False          
+        elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
+          print("Shift off")
+          self.shift_pressed = False          
+        #endif        
     #enddef
     
     def on_window_resize(self, event):  # not used as gets false events
@@ -226,8 +365,7 @@ class TeenyComposer(tk.Tk):
         width = event.width
         height = event.height
         print(f"Window resized to {width}x{height}")
-        sel
-        f.refresh()
+        self.refresh()
     #enddef
     
     def toggle_stave(self):
@@ -267,8 +405,22 @@ class TeenyComposer(tk.Tk):
           px2 = min(bx2,self.end_tm/parser.duration*bw + bx1) 
           self.canvas.create_rectangle(px1+4,by1+4,px2-4,by2-4,fill="black")
         #end
-        x = self.note_start_x + (self.time-self.start_tm)*self.x_scale
         y1 = self.first_note_line_y
+        x = self.note_start_x + (self.begin_time-self.start_tm)*self.x_scale
+        if x > self.note_start_x and x < self.wide:
+          y2 = self.last_note_line_y
+        else:
+          y2 = y1 
+        #endif 
+        self.begin_line = self.canvas.create_line(x,y1,x,y2,width=4,fill="green")
+        x = self.note_start_x + (self.fini_time-self.start_tm)*self.x_scale
+        if x > self.note_start_x and x < self.wide:
+          y2 = self.last_note_line_y
+        else:
+          y2 = y1 
+        #endif 
+        self.fini_line = self.canvas.create_line(x,y1,x,y2,width=4,fill="blue")
+        x = self.note_start_x + (self.cursor_time-self.start_tm)*self.x_scale
         if x > self.note_start_x and x < self.wide:
           y2 = self.last_note_line_y
         else:
@@ -312,8 +464,8 @@ class TeenyComposer(tk.Tk):
         self.x_scale = show_width/tm_wide
         for ti,track in enumerate(parser.tracks):
           print("Display track stave:",ti)
-          if parser.track_enable[ti]:
-            for env in track:
+          if parser.track_show[ti]:
+            for ei,env in enumerate(track):
               if env[1] == 0:  #ignore noteoff events
                 continue
               if env[2] > self.end_tm:
@@ -326,12 +478,21 @@ class TeenyComposer(tk.Tk):
                 x2 = (endTm - self.start_tm)/tm_wide*show_width
                 y = self.note_y_pos[env[0]]
                 #print("N:",y,x1,x2)
-                col = "black"
+                if ti < len(self.track_colors):
+                  col = self.track_colors[ti]
+                else:
+                  col = "purple"
+                #endif
                 if is_sharp(env[0]):
                   col = "red"
                 #endif
+                stip = ''
+                si = ei*128 + ti
+                if si in parser.selected:
+                  stip = 'gray50'
+                #endif
                 self.canvas.create_rectangle(self.note_start_x+x1,y,\
-                     self.note_start_x+x2,y+self.note_height,fill=col)
+                     self.note_start_x+x2,y+self.note_height,fill=col,outline=col,stipple=stip)
               #endif
             #endfor
           #endif
@@ -388,9 +549,9 @@ class TeenyComposer(tk.Tk):
         #endwhile
         self.canvas.create_line(self.note_start_x,self.first_note_line_y,self.note_start_x,y,width=4)
         for ti,track in enumerate(parser.tracks):
-          if parser.track_enable[ti]:
+          if parser.track_show[ti]:
             print("Display track:",ti)
-            for env in track:
+            for ei,env in enumerate(track):
               #print("Show note:",env)
               if env[1] == 0:  #ignore noteoff events
                 continue
@@ -412,8 +573,14 @@ class TeenyComposer(tk.Tk):
                 else:
                   col = "purple"
                 #endif
+                stip = ''
+                si = ei*128 + ti
+                #print("Selected:",si," in ",parser.selected,"?")
+                if si in parser.selected:
+                  stip = 'gray50'
+                #endif
                 #self.canvas.create_rectangle(x1,y1,x2,y3,fill=col)
-                self.canvas.create_polygon(x1,y1,x2,y2,x2,y3,x1,y3,fill=col)
+                self.canvas.create_polygon(x1,y1,x2,y2,x2,y3,x1,y3,fill=col,outline=col,stipple=stip)
               #endif
             #endfor
           #endif
@@ -438,12 +605,16 @@ class TeenyComposer(tk.Tk):
     def on_mouse_press(self, event):
         #print(dir(event))
         #print(event)
-        if event.y < self.first_note_line_y or event.y > self.last_note_line_y:
-          return
-        # save mouse drag start position
+        self.note_playing = -1
         self.start_x = event.x
         self.start_y = event.y
         self.start_typ = event.num
+        if event.num == 1 and self.control_pressed:  #for multi select
+          self.start_typ = 3
+        #endif
+        if event.y < self.first_note_line_y or event.y > self.last_note_line_y:
+          return
+        # save mouse drag start position
         np = self.find_note(event.y)
         if not np:
           return
@@ -490,16 +661,7 @@ class TeenyComposer(tk.Tk):
           return
         #endif
         if not self.rect:
-          if self.stave:
-            col = "green"
-            if is_sharp(np[1]) and event.num == 2:
-              col = "red"
-            else:
-              note -= 1
-            #endif  
-          else:
-            col = "lightblue"
-          #endif
+          col = "lightblue"
           # create rectangle if not yet exist
           if self.start_typ == 1:
             self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, 1, 1, fill=col)
@@ -535,6 +697,15 @@ class TeenyComposer(tk.Tk):
       n = self.max_note - int((y - self.first_note_line_y)/self.note_height)
       return n
     #enddef
+    
+    def get_note_pressed(self,y):
+      if self.stave:  #bit more complicated to work out what note for stave view
+        n = self.get_stave_note(y)
+      else:
+        n = self.get_piano_note(y)  
+      #endif
+      return n
+    #enddef
 
     def on_mouse_release(self, event):
         #print(self.max_note,self.min_note)
@@ -555,13 +726,45 @@ class TeenyComposer(tk.Tk):
         dy = event.y - self.start_y
         #print("****************",dx,dy)
         if abs(dx) < 2 and abs(dy) < self.note_height:
-          self.time = (event.x - self.note_start_x)/self.x_scale + self.start_x
-          if self.play_line:
+          if event.num == 2:  #move the time cursor
             y1 = self.first_note_line_y
-            y2 = self.last_note_line_y 
-            self.canvas.coords(self.play_line, event.x, y1, event.x, y2)
+            y2 = self.last_note_line_y
+            # x should be opposite of
+            #         x = self.note_start_x + (tm-self.start_tm)*self.x_scale
+            tm = int((event.x - self.note_start_x)/self.x_scale + self.start_tm)
+            if self.snap:
+              tm = int(round(tm / parser.ticks_per_beat) * parser.ticks_per_beat)
+            if self.control_pressed:
+              self.begin_time = tm
+              #if self.begin_line:
+              #  self.canvas.coords(self.begin_line, event.x, y1, event.x, y2)
+              #endif
+            elif self.shift_pressed:
+              self.fini_time = tm
+              #if self.fini_line:
+              #  self.canvas.coords(self.fini_line, event.x, y1, event.x, y2)
+              #endif
+            else:
+              self.cursor_time = tm
+              #if self.play_line:
+              #  self.canvas.coords(self.play_line, event.x, y1, event.x, y2)
+              #endif
+              self.begin_time = 0
+              self.fini_time = parser.duration
+            #endif             
+            self.play_index = parser.find_index(self.cursor_time)
+            self.refresh()
+          elif event.num == 1:  #select existing notes
+            n = self.get_note_pressed(self.start_y)
+            if n < 0 or n >= 128:  #midi limits
+              return
+            #endif
+            tm_wide = self.end_tm - self.start_tm
+            stave_wide = self.wide - self.note_start_x
+            tm = int(self.start_tm + (event.x - self.note_start_x)*tm_wide/stave_wide)
+            parser.select_existing(n,tm,self.edit_track,self.control_pressed)
+            self.refresh()
           #endif
-          self.play_index = parser.find_index(self.time)
           return
         #endif  
         if event.num == 3:
@@ -618,15 +821,8 @@ class TeenyComposer(tk.Tk):
         #    self.max_note = self.min_note + note_high
         #  #endif
         elif event.num == 1:
-          if self.stave:  #bit more complicated to work out what note for stave view
-            n = self.get_stave_note(self.start_y)
-          else:
-            n = self.get_piano_note(self.start_y)  
-          #endif
-          if n < 0 or n >= 128:  #midi limits
-            return
-          #endif
-          print("Marked start note:", n)
+          n = self.get_note_pressed(self.start_y)
+          print("Start note:", n)
           if n > self.max_note:
             self.max_note = n
           elif n < self.min_note:
@@ -638,35 +834,53 @@ class TeenyComposer(tk.Tk):
           print("Stave wide:",stave_wide)
           start_tm = int(self.start_tm + (self.start_x - self.note_start_x)*tm_wide/stave_wide)
           end_tm = int(self.start_tm + (event.x - self.note_start_x)*tm_wide/stave_wide)
+          if self.snap:
+            start_tm = int(round(start_tm / parser.ticks_per_beat) * parser.ticks_per_beat)
+            end_tm = int(round(end_tm / parser.ticks_per_beat) * parser.ticks_per_beat)
+          #endif
           print("Start-end:",start_tm,end_tm)
-          if start_tm > end_tm:  #back swipe means erase
-            if self.stave:  #bit more complicated to work out what note for stave view
-              end_n = self.get_stave_note(event.y)
-            else:
-              end_n = self.get_piano_note(event.y)  
-            #endif
-            if end_n < 0 or end_n >= 128:  #midi limits
+          if self.control_pressed:  #this is note selection not marking
+            n2 = self.get_note_pressed(event.y)
+            print("End note:", n2)
+            if n2 > self.max_note:
+              self.max_note = n2
+            elif n2 < self.min_note:
+              self.min_note = n2
+            #endif           
+            parser.select_range(n,n2,start_tm,end_tm,self.edit_track,self.shift_pressed)
+          else:
+            if n < 0 or n >= 128:  #midi limits
               return
             #endif
-            print("Marked end note:", end_n)
-            if n > self.max_note:
-              self.max_note = end_n
-            elif n < self.min_note:
-              self.min_note = end_n
-            #endif
-            parser.remove_notes(n,end_n,end_tm,start_tm,self.edit_track)  #note start end reversed 
-            if self.rect:
-              self.canvas.delete(self.rect)
-            #endif
-          else:  #add or modify note
-            if self.edit_track >= len(parser.tracks):  # shouldn't happen
-              print("Edit track beyond existing tracks")
-              return -1
-            #endif  
-            i = parser.mod_note(n,start_tm,end_tm,self.edit_track,self.edit_vel)
-            if i < 0:
-              print("Insert noteon at ",start_tm)
-              parser.insert_note(n,start_tm,end_tm,self.edit_track,self.edit_vel)
+            if start_tm > end_tm:  #back swipe means erase
+              if self.stave:  #bit more complicated to work out what note for stave view
+                end_n = self.get_stave_note(event.y)
+              else:
+                end_n = self.get_piano_note(event.y)  
+              #endif
+              if end_n < 0 or end_n >= 128:  #midi limits
+                return
+              #endif
+              print("Marked end note:", end_n)
+              if n > self.max_note:
+                self.max_note = end_n
+              elif n < self.min_note:
+                self.min_note = end_n
+              #endif
+              parser.remove_notes(n,end_n,end_tm,start_tm,self.edit_track)  #note start end reversed 
+              if self.rect:
+                self.canvas.delete(self.rect)
+              #endif
+            else:  #add or modify note
+              if self.edit_track >= len(parser.tracks):  # shouldn't happen
+                print("Edit track beyond existing tracks")
+                return -1
+              #endif  
+              i = parser.mod_note(n,start_tm,end_tm,self.edit_track,self.edit_vel)
+              if i < 0:
+                print("Insert noteon at ",start_tm)
+                parser.insert_note(n,self.edit_vel,start_tm,end_tm,self.edit_track)
+              #endif
             #endif
           #endif
         #endif
@@ -884,14 +1098,25 @@ class TeenyComposer(tk.Tk):
       #endif
       parser.track_nms[self.track_combo.current()] = nm
       self.track_combo.config(values = parser.track_nms)
+      self.track_combo.current(self.edit_track)  #to refresh combo
+    #enddef
+    
+    def smash(self):
+      parser.smash(self.begin_time,self.fini_time)
+      self.cursor_time = self.begin_time
+      self.begin_time = 0
+      self.fini_time = parser.duration 
+      self.refresh()
     #enddef
     
     def track_combo_change(self,ev):
       print("Change:",ev)
       self.edit_track = self.track_combo.current()
       self.track_program_combo.current(parser.track_program[self.edit_track])
-      print("Track " + self.track_combo.get() + "selected")
-      self.track_enable_var.set(parser.track_enable[self.edit_track])
+      print("Track " + self.track_combo.get() + "selected ",self.edit_track)
+      self.track_show_var.set(parser.track_show[self.edit_track])
+      self.track_mute_var.set(parser.track_mute[self.edit_track])
+      self.track_solo_var.set(parser.track_solo == self.edit_track)
     #enddef
     
     def track_program_combo_change(self,ev):
@@ -900,14 +1125,34 @@ class TeenyComposer(tk.Tk):
       print("Track " + self.track_combo.get() + " program changed to:" + self.track_program_combo.get())
     #enddef
     
-    def track_enable_checkbox_change(self):
-      print("Enable changed for:",self.track_combo.current()," to ",self.track_enable_var.get())
-      parser.track_enable[self.track_combo.current()] = self.track_enable_var.get();
+    def track_show_checkbox_change(self):
+      print("Track show changed for:",self.track_combo.current()," to ",self.track_show_var.get())
+      parser.track_show[self.track_combo.current()] = self.track_show_var.get();
       self.refresh()
     #enddef
     
+    def track_mute_checkbox_change(self):
+      print("Track mute changed for:",self.track_combo.current()," to ",self.track_mute_var.get())
+      parser.track_mute[self.track_combo.current()] = self.track_mute_var.get()
+      self.refresh()
+    #enddef
+    
+    def track_solo_checkbox_change(self):
+      print("Track solo changed for:",self.track_combo.current()," to ",self.track_solo_var.get())
+      if self.track_solo_var.get():
+        parser.track_solo = self.edit_track
+      else:
+        parser.track_solo = -1
+      #endif  
+      self.refresh()
+    #enddef
+       
     def auto_pan_checkbox_change(self):
-      auto_pan = self.auto_pan_var.get();
+      self.auto_pan = self.auto_pan_var.get();
+    #enddef
+    
+    def snap_checkbox_change(self):
+      self.snap = self.snap_pan_var.get();
     #enddef
     
     def play_tune(self):
@@ -926,22 +1171,23 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def stop_tune(self):
+      synth.stop()
       self.playing = False
       self.play_btn.config(text="play")
       #self.canvas.delete(self.play_line)
       #self.play_line = None
-      self.time = 0  #in milliseconds
+      self.cursor_time = self.begin_time  #in milliseconds
     #enddef
     
     def play_next(self):
-      #print("Cursor callback:",self.time)
-      x = self.note_start_x + (self.time-self.start_tm)*self.x_scale
+      #print("Cursor callback:",self.cursor_time)
+      x = self.note_start_x + (self.cursor_time-self.start_tm)*self.x_scale
       y1 = self.first_note_line_y
       y2 = self.last_note_line_y
       if self.auto_pan:
         if x < self.note_start_x or x > self.wide:
-          self.end_tm = self.time + self.end_tm - self.start_tm
-          self.start_tm = self.time
+          self.end_tm = self.cursor_time + self.end_tm - self.start_tm
+          self.start_tm = self.cursor_time
           x = self.note_start_x
           self.refresh()
         #endif
@@ -951,24 +1197,37 @@ class TeenyComposer(tk.Tk):
       #print("Cursor x:",x,y1,y2)
       if self.play_line: 
         self.canvas.coords(self.play_line, x, y1, x, y2)
+      is_playing = False #assumption
       for ti,track in enumerate(parser.tracks):
-        if not parser.track_enable[ti]:
+        if parser.track_solo >= 0:
+          if parser.track_solo != ti:
+            continue
+          #endif
+        elif parser.track_mute[ti]:
           continue
+        #endif
         while self.play_index[ti] < len(track):
           env = track[self.play_index[ti]]
-          if env[2] > self.time:
+          if env[2] > self.cursor_time:
             break
           #endif
           print(self.play_index[ti]," Playing event:",env)
           synth.play(env[0],env[1],ti)  #channel = track for the moment  
-          self.play_index[ti] += 1  
+          self.play_index[ti] += 1
         #endwhile
+        if self.play_index[ti] < len(track):
+          is_playing = True
+        #endif  
       #endfor
-      if self.play_index[ti] >= len(track):
+      if not is_playing:
         self.stop_tune() #reached end
       elif self.playing:
-        self.time += self.play_step  # in milliseconds
-        self.after(1,self.play_next)  #poll every millisecond
+        self.cursor_time += self.play_step  # in milliseconds
+        if self.cursor_time > self.fini_time:
+          self.stop_tune()
+        else:
+          self.after(1,self.play_next)  #poll every millisecond
+        #endif
       #endif
     #enddef
     
@@ -983,12 +1242,12 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def transpose_up(self):
-      parser.transpose(1)
+      parser.transpose_all(1)
       self.refresh()
     #enddef
     
     def transpose_down(self):
-      parser.transpose(-1)
+      parser.transpose_all(-1)
       self.refresh()
     #enddef
     

@@ -1,4 +1,5 @@
-import sys, math  #python3 -m pip install mido
+import sys, math, copy
+#python3 -m pip install mido
 from mido import Message, MetaMessage, MidiFile, MidiTrack
 
 class midiParser():
@@ -9,7 +10,9 @@ class midiParser():
   tracks = [[],]  #first empty track
   track_nms = ["track1",]
   track_program = [0,]
-  track_enable = [True,]
+  track_show = [True,]
+  track_mute = [False,]
+  track_solo = -1 #otherwise is track so solo
   verbose = False
   ticks_per_beat = 480
   tempo =600000    # uSec per per quarter note
@@ -21,7 +24,10 @@ class midiParser():
   edit_history = []  #record (track,event_index,type,env) where type=(0=addition,1=deletion,3=modification delete)
   undo_index = 0
   rec_disable = False  #used to prevent undo history being lost during redo or over written with undo
-
+  
+  selected = []
+  clipboard = []
+  tune_stack = []
   
   #1000 would be one beat per second at default tempo
   
@@ -35,6 +41,7 @@ class midiParser():
     print(dir(self.midi_file))
     self.edit_history = []
     self.undo_index =0
+    self.select = []
   #enddef
   
   def save(self,fid):
@@ -48,19 +55,17 @@ class midiParser():
         track.append(MetaMessage('set_tempo', tempo=self.tempo, time=0))
         track.append(MetaMessage('time_signature',numerator = self.numerator,\
             denominator =self.denominator , clocks_per_click =self.clocks_per_click , \
-             notated_32nd_notes_per_beat = self.notated_32nd_notes_per_beat), time=0)
+             notated_32nd_notes_per_beat = self.notated_32nd_notes_per_beat, time=0))
       #endif  
       track.append(Message('program_change', program=self.track_program[ti], time=0))
       ltm = 0
       for env in self.tracks[ti]:
-        if self.track_enable[ti]:
-          dtm = env[2] - ltm  # delta time since last event
-          ltm = env[2]
-          if env[1] == 0:  #note off event
-            track.append(Message('note_off', note=env[0], velocity=0, time=int(dtm)))
-          else:
-            track.append(Message('note_on', note=env[0], velocity=env[1], time=int(dtm)))
-          #endif
+        dtm = env[2] - ltm  # delta time since last event
+        ltm = env[2]
+        if env[1] == 0:  #note off event
+          track.append(Message('note_off', note=env[0], velocity=0, time=int(dtm)))
+        else:
+          track.append(Message('note_on', note=env[0], velocity=env[1], time=int(dtm)))
         #endif
       #endfor
     #endfor 
@@ -81,10 +86,16 @@ class midiParser():
         note_i = [0,]*128
         tm = 0
         if target_track == "" or track.name == target_track:
-          self.track_nms.append(track.name)
+          if len(track.name) > 0:
+            self.track_nms.append(track.name)
+          else:
+            self.track_nms.append(f"track{ti}")
+          #endif
           self.track_program.append(0);
           self.tracks.append([])
-          self.track_enable.append(True)
+          self.track_show.append(True)
+          self.track_mute.append(False)
+          self.track_solo = -1
           for msg in track:
               # Print each message and its time delta
               mstr = str(msg)
@@ -111,7 +122,7 @@ class midiParser():
                 if n > self.max_note:
                   self.max_note = n
                 tm += msg.time
-                if msg.type == "note_on":
+                if msg.type == "note_on" and vel > 0:
                   note_i[n] = len(self.tracks[ti])
                   self.tracks[ti].append((n,vel,tm,0))  #track, note, vel, start_time, temp end_time - replaced once we know
                 else:
@@ -122,7 +133,7 @@ class midiParser():
                   print(tm,n)
               #endif
           #endfor
-        #endifinsert_note
+        #endif
     #endfor
     print(f"{sharps} sharps")
     print("Min note:",self.min_note)
@@ -139,7 +150,7 @@ class midiParser():
       for env in track:
         f.write(f"{env[0]},{env[1]},{env[2]},{env[3]}\n")  #note, vel, start_tm, end_tm
       #endfor
-    #endwithinsert_note
+    #endwith
   #enddef
   
   def load_track(self,fid,track_nm,track_nr=-1):
@@ -151,11 +162,15 @@ class midiParser():
       self.track_nms.append(track_nm)
       self.track_program.append(0)
       self.tracks.append([])
-      self.track_enable.append(True)
+      self.track_show.append(True)
+      self.track_mute.append(False)
+      self.track_solo = -1
     else:
       self.track_nms[track_nr] = track_nm
       self.track_program[track_nr] = 0
-      self.track_enable[track_nr] = True
+      self.track_show[track_nr] = True
+      self.track_mute[track_nr] = False
+      self.track_solo = -1
     #endif
     track = self.tracks[track_nr]
     with open(fid,"r") as f:
@@ -187,6 +202,7 @@ class midiParser():
         for i, env in enumerate(track):
           if env[2] > nenv[2]:
             self.tracks[track_nr].insert(i,nenv)
+            self.adjust_selected(track,i,1)
             inserted = True
             break
           #endif  
@@ -205,7 +221,7 @@ class midiParser():
     self.min_note = 128
     self.max_note = 0
     for ti,track in enumerate(self.tracks):
-      if self.track_enable[ti]:
+      if self.track_show[ti]:
         self.test_range(track)
       #endif
     #endfor
@@ -236,53 +252,98 @@ class midiParser():
     del self.track_program[ti]
     del self.tracks[ti]
     self.test_all_range()
+    self.selected = []  #too hard to adjust it safely
   #enddef
   
   def add_track(self,nm):
     self.track_nms.append(nm)
     self.track_program.append(0)
     self.tracks.append([],)
-    self.track_enable.append(True)
+    self.track_show.append(True)
+    self.track_mute.append(False)
+    self.track_solo.append(False)
+  #enddef
+  
+  def print_track(self,ti):
+    print("track ",ti)
+    track = self.tracks[ti]
+    for env in track:
+      print(env)
+    #endfor
+  #enddef
+  
+  def print_history(self):
+    print("undo index:",self.undo_index)
+    if self.undo_index > 0:
+      print("Current history:",self.edit_history[:-self.undo_index])
+    else:
+      print("Current history:",self.edit_history)
+    #endif
   #enddef
   
   def rec_history(self,edit):
     if self.rec_disable:  #happens when doing redo so that history isn't erased
       return
-    print("Record history:",edit)
-    env = edit[3]
-    if env[1] == 0:  #don't record noteoff events
-      return
+    print("Record this:",edit)
+    if len(edit) > 3:
+      env = edit[3]
+      if env[1] == 0:  #don't record noteoff events
+        return
+      #endif
+    #endif
     if self.undo_index > 0 and self.undo_index < len(self.edit_history):
+      for edit in self.edit_history[-self.undo_index:]:
+        if edit[2] == 3:
+          self.prune_tune_stack(edit[1])
       self.edit_history = self.edit_history[:-self.undo_index]
       self.undo_index = 0
     #endif
     self.edit_history.append(edit)
   #enddef
   
+  def push_tune(self):
+    cp = copy.deepcopy(self.tracks)
+    print("stack copy is:",cp)
+    self.tune_stack.append(cp)
+    print("Tune stack:",len(self.tune_stack))
+  #enddef
+  
+  def pop_tune(self):
+    if len(self.tune_stack) > 0:
+      print("Tune stack:",len(self.tune_stack))
+      self.tracks = self.tune_stack.pop()
+    #endif
+  #enddef
+  
+  def prune_tune_stack(self,from_here):
+    #free up tune stack for unnecessary redos
+    self.tune_stack = self.tune_stack[:from_here]
+  #endif
+  
   def undo(self):
     print("undo index:",self.undo_index)
-    print(self.edit_history)
+    print("Current history:",self.edit_history)
     self.rec_disable = True
     if self.undo_index < len(self.edit_history):
       self.undo_index += 1
       edit = self.edit_history[-self.undo_index]
-      track = self.tracks[edit[0]]
-      env = edit[3]
-      if edit[2] == 0:  #insert
-        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
-        print("Remove at:",edit[1],j)
-        if j > 0:
-          del track[j]
-        del track[edit[1]]
-      elif edit[2] == 1:  #deletion
-        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
-      elif edit[2] == 2:  #modification
-        nenv = track[edit[1]]
-        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
-        if j > 0:
-          del(track[j])
-        del track[edit[1]]
-        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      #track = self.tracks[edit[0]]
+      if edit[2] == 3:  #full copy
+        self.pop_tune()
+        self.duration += edit[1]
+        #self.begin_time = edit[0]
+        #self.fini_time += edit[1]
+      else:
+        env = edit[3]
+        if edit[2] == 0:  #insert
+          self.delete_note(edit[0],edit[1])
+        elif edit[2] == 1:  #deletion
+          self.insert_note(env[0],env[1],env[2],env[3],edit[0])
+        elif edit[2] == 2:  #modification
+          #nenv = track[edit[1]]
+          self.delete_note(edit[0],edit[1])
+          self.insert_note(env[0],env[1],env[2],env[3],edit[0])
+        #endif
       #endif
     #endif
     self.rec_disable = False
@@ -290,28 +351,28 @@ class midiParser():
   
   def redo(self):
     print("undo index:",self.undo_index)
-    print(self.edit_history)
+    print("Current history:",self.edit_history)
     self.rec_disable = True
     if self.undo_index > 0:
       edit = self.edit_history[-self.undo_index]
       self.undo_index -= 1
-      track = self.tracks[edit[0]]
-      env = edit[3]
-      if edit[2] == 0:  #insert type
-        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
-      elif edit[2] == 1:  #deletion
-        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
-        print("Remove at:",edit[1],j)
-        if j > 0:
-          del track[j]
-        del track[edit[1]]
-      elif edit[2] == 2:  #modification
-        nenv = track[edit[1]]
-        j = self.find_matching_noteoff(edit[1]+1,env[0],track)
-        if j > 0:
-          del(track[j])
-        del track[edit[1]]
-        self.insert_note(env[0],env[2],env[3],edit[0],env[1])
+      #track = self.tracks[edit[0]]
+      if edit[2] == 3:
+        self.push_tune()
+        self.duration -= edit[1]
+        #self.begin_time = edit[0]
+        #self.fini_time -= edit[1]
+      else:
+        env = edit[3]
+        if edit[2] == 0:  #insert type
+          self.insert_note(env[0],env[1],env[2],env[3],edit[0])
+        elif edit[2] == 1:  #deletion
+          self.delete_note(edit[0],edit[1])
+        elif edit[2] == 2:  #modification
+          #nenv = track[edit[1]]
+          self.delete_note(edit[0],edit[1])
+          self.insert_note(env[0],env[1],env[2],env[3],edit[0])
+        #endif
       #endif
     #endif  
     self.rec_disable = False
@@ -335,14 +396,14 @@ class midiParser():
       i = self.find_existing_note(n,start_tm,end_tm,track)
       if i < 0:
         break
-      j = self.find_matching_noteoff(i+1,n,track)
-      print("Erase note at ", i,j)
-      self.rec_history((ti,i,1,tuple(track[i])))
+      #j = self.find_matching_noteoff(i+1,n,track)
+      #print("Erase note at ", i,j)
       del_cnt += 1
-      if j >= 0:
-        del track[j]  #must erase noteoff first
+      self.delete_note(ti,i)
+      #if j >= 0:
+      #  del track[j]  #must erase noteoff first
       #endif
-      del track[i]
+      #del track[i]
     #endwhile
     self.test_all_range()
     return del_cnt                    
@@ -352,13 +413,198 @@ class midiParser():
     track = self.tracks[ti]
     i = self.find_existing_note(n,start_tm,end_tm,track)
     if i >= 0:  #found one
-      self.rec_history((ti,i,1,tuple(track[i])))
-      j = self.find_matching_noteoff(i+1,n,track)
-      del track[j]     
-      del track[i]
-      self.insert_note(n,start_tm,end_tm,ti,vel)
+      self.delete_note(ti,i)
+      self.insert_note(n,vel,start_tm,end_tm,ti)
     #endif
     return i
+  #enddef 
+  
+  def select_range(self,n1,n2,stm,etm,ti=0,shift=False):
+    print(f"Select note range {n1} to {n2} and from tick:{stm} to {etm}")
+    track = self.tracks[ti]
+    top_note = max(n1,n2)
+    bot_note = min(n1,n2)
+    for i, env in enumerate(track):
+      if env[1] == 0:
+        continue
+      if env[0] >= bot_note and env[0] <= top_note and env[2] > stm and env[2] < etm:
+        print("Select event at:",i,"for track:",ti)
+        ei = i*128+ti
+        if shift:
+          if ei in self.selected:
+            j = self.selected.index(ei)
+            del self.selected[j]
+          #endif  
+        else:
+          if ei in self.selected:
+            continue
+          else:  
+            self.selected.append(ei)
+          #endif
+        #endif
+      #endif
+    #endfor
+  #enddef
+  
+  def select_existing(self,n,tm,ti=0,cntrl=False):
+    print("Select existing note:",n,"at tick:",tm)
+    track = self.tracks[ti]
+    if not cntrl:
+      self.clear_selected()
+    #endif
+    i = self.find_existing_note(n,tm,tm,track)
+    if i >= 0:
+      print("Select event at:",i,"for track:",ti)
+      ei = i*128+ti
+      if not cntrl:
+        self.selected = [ei,]
+      elif ei in self.selected:
+        j = self.selected.index(ei)
+        del self.selected[j]
+      else:
+        self.selected.append(ei)
+      #endif
+    #endif
+  #enddef
+  
+  def clear_selected(self):
+    self.selected = []
+  #enddef
+  
+  def invert_selection(self,ti):
+    track = self.tracks[ti]
+    temp_sel = list(self.selected)
+    #print("Tempsel:",temp_sel)
+    self.selected = []
+    for i,env in enumerate(track):
+      if env[1] == 0:
+        continue #ignore note off
+      #endif
+      ei = i*128 + ti
+      if not ei in temp_sel:
+        #print("Append:",ei)
+        self.selected.append(ei)
+      #endif
+    #endfor  
+  #enddef
+  
+  def process_selected(self,action,nti):
+    i = 0
+    while i <  len(self.selected):
+      print(f"Processing item {i} from {self.selected}")
+      si = self.selected[i]  #can't use self.selected directly as it may be adjusted during process action
+      ti = si & 0x7f  #this is the track where the event was selected
+      if ti >= len(self.tracks):
+        continue
+      #endif  
+      ni = si >> 7
+      track = self.tracks[ti]
+      if ni > len(track):
+        print(f"Selected event at {ni} is past length of track {len(track)}")
+        continue
+      #endif
+      if action(ti,ni):  #if returns False, then a delete action has removed item from selected
+        i += 1  #advance to next item
+      #endif
+    #endfor
+  #enddef
+  
+  def copy_action(self,ti,ni):
+    track = self.tracks[ti]
+    self.clipboard.append(track[ni])
+    return True
+  #enddef
+  
+  def copy_selected(self,ti):
+    self.clipboard = []
+    self.process_selected(self.copy_action,ti)
+    return True  
+  #enddef
+  
+  def cut_selected(self,ti):
+    self.copy_selected(ti)
+    self.delete_selected(ti)
+    return True
+  #enddef
+  
+  def paste_clipboard(self,ti,paste_tm):
+    start_tm = -1
+    for env in self.clipboard:
+      if start_tm < 0 or env[2] < start_tm:
+        start_tm = env[2]
+      #endif
+    #endof
+    for env in self.clipboard:
+      s_tm = env[2] - start_tm + paste_tm
+      e_tm = s_tm + env[3] - env[2]
+      self.insert_note(env[0],env[1],s_tm,e_tm,ti)
+    #endfor
+  #enddef
+  
+  def delete_note(self,ti,ni):
+    track = self.tracks[ti]
+    if ni >= len(track):
+      print(f"Note not found ni:{ni} >= len(track):{len(track)}")
+      return
+    #endif
+    env = track[ni]
+    print(f"Delete note {env} at pos {ni} track {ti} within {len(track)} events")
+    self.rec_history((ti,ni,1,tuple(track[ni])))
+    j = self.find_matching_noteoff(ni+1,env[0],track)
+    print(f"Remove note at pos: {ni} and {j}")
+    if j > 0:
+      del track[j]
+      self.adjust_selected(ti,j,-1)
+    del track[ni]
+    self.adjust_selected(ti,ni,-1)
+    ei = ni*128 + ti
+    if ei in self.selected:
+      i = self.selected.index(ei)
+      if i >= 0:
+        del self.selected[i]
+      #endif
+    #endif
+    return False
+  #enddef
+  
+  def delete_selected(self,ti):
+    self.process_selected(self.delete_note,ti)
+  #enddef
+  
+  def adjust_selected(self,ti,i,di):
+    # i is the location of the resent addition or deletion
+    # di is 1 for insertions and -1 for deletions
+    print(f"Adjust select for location {i} by {di}")
+    for si in range(len(self.selected)):
+      se = self.selected[si]
+      ei = se >> 7  #tm
+      eti = se & 0x7f  #track
+      #print("Compare tracks:",eti,ti)
+      if eti != ti:  #only adjust the selection for the current track
+        continue
+        #print("Compare loc:",di,ei,i)
+      #endif
+      if (di < 0 and ei > i) or (di > 0 and ei >= i):
+        ei += di
+        #print("Adj loc:", si,ei,eti)
+        self.selected[si] = ei*128 + eti
+      #endif
+    #endfor    
+  #enddef
+  
+  def print_selection(self,ti):
+    track = self.tracks[ti]
+    for si in self.selected:
+      if ti != (si & 0x7F):
+        continue  #not this track
+      #endif
+      ni = si >> 7
+      if ni < len(track):
+        print(f"Select item {ni} at {track[ni]}")
+      else:
+        print(f"Select item {ni} is past length of track= {len(track)}")
+      #endif
+    #endfor
   #enddef 
   
   def find_existing_note(self,n,start_tm,end_tm,track):
@@ -386,14 +632,14 @@ class midiParser():
   #enddef 
   
   def find_matching_noteoff(self,start_i,n,track):
-    print("Track:",track)
-    print("Start_i:",start_i)
-    for i in range(start_i,len(track)+1):
+    #print("Track:",track)
+    #print("Start_i:",start_i)
+    for i in range(start_i,len(track)):
       env = track[i]
-      print("Testing at ",i," for noteoff:",env)
+      #print("Testing at ",i," for noteoff:",env)
       if env[0] == n:
         if env[1] != 0:
-          print("error - noteon found before note off")
+          print(f"error - noteon found before note off = {env}")
           return -2  #  else:   #this is a note off event
         #endif
         return i
@@ -401,9 +647,28 @@ class midiParser():
     #endfor
     print("Matching noteoff event not found")
     return -1
+  #enddef
+  
+  def select_track_errors(self,ti):
+    track = self.tracks[ti]
+    self.selected = []
+    notes_on = [False]*128
+    for ni,env in enumerate(track):
+      if env[1] > 0:
+        j = self.find_matching_noteoff(ni+1,env[0],track)
+        if j < 0:
+          print(f"  for note:{env} pos {ni}")
+          self.selected.append(ni*128 + ti)
+        notes_on[env[0]] = True
+      else:
+        if not notes_on[env[0]]:
+          print(f"Error: Note off without note on for {env} at {ni}")
+        notes_on[env[0]] = False  
+      #endif
+    #endfor
   #enddef  
 
-  def insert_note(self,n,start_tm,end_tm,ti,vel):
+  def insert_note(self,n,vel,start_tm,end_tm,ti):
     track = self.tracks[ti]
     note_env = (n,vel,start_tm,end_tm)
     print("Insert ",note_env," into track:",ti)
@@ -416,12 +681,12 @@ class midiParser():
       if env[2] > note_env[2]:  #this event past intended event
         if i < len(track):
           self.tracks[ti].insert(i,note_env)
+          self.adjust_selected(ti,i,1)
           self.rec_history((ti,i,0,tuple(note_env)))  #0 type is noteon
         else:
           self.rec_history((ti,len(self.tracks[ti]),0,tuple(note_env)))
           self.tracks[ti].append(note_env)
         #endif
-        i += 1 #to allow for the inserted event
         if note_env[1] == 0:  #vel already set to 0 so this is noteoff
           return  #note off has already been inserted
         note_env = (n,0,end_tm,start_tm)   #note reversal of time for noteoff
@@ -434,15 +699,23 @@ class midiParser():
     self.tracks[ti].append(note_env)
     if note_env[1] != 0:  #vel is not zero yet, so need to add note off
       note_env = (note_env[0],0,note_env[3],note_env[2])   #note reversal of time for noteoff
-      self.tracks[ti].append(note_env)
+      track.append(note_env)
     #endif
   #enddef 
   
-  def transpose(self,delta):
-    for track in self.tracks:
-      for i,env in enumerate(track):
+  def transpose_all(self,delta):
+    for ti,track in enumerate(self.tracks):
+      self.transpose_track(delta,ti)
+    #endfor
+  #enddef
+  
+  def transpose_track(self,delta,ti):
+    track = self.tracks[ti]
+    for i,env in enumerate(track):
+      ei = i*128 + ti
+      #if anything has been selected then only selected is shifted
+      if len(self.selected) == 0 or ei in self.selected:
         track[i] = (env[0]+delta,env[1],env[2],env[3])
-      #endfor
     #endfor
   #enddef
   
@@ -457,6 +730,156 @@ class midiParser():
       #endfor
     #endfor
     return tm_i
+  #enddef
+  
+  def check_duration(self):
+    self.duration = 0
+    for ti,track in enumerate(self.tracks):
+      if len(track) > 0:
+        env = track[-1]
+        self.duration = max(self.duration,env[2])
+      #endif
+    #endif
+  #enddef  
+  
+  def trim_tm(self,tm,before=True):
+    for ti,track in enumerate(self.tracks):
+      if not self.track_show[ti]:
+        continue
+      #endif
+      del_list = []
+      for i,env in enumerate(track):
+        if env[1] > 0:
+          if before:
+            if env[2] < tm:
+              del_list.append(i)
+              j = self.find_matching_noteoff(i+1,env[0],track)
+              if j > 0:
+                del_list.append(j)
+              #endif
+            else:
+              track[i] = (env[0],env[1],env[2]-tm,env[3]-tm)
+            #endif
+          else:
+            if env[2] > tm:
+              del_list.append(i)
+              j = self.find_matching_noteoff(i+1,env[0],track)
+              if j > 0:
+                del_list.append(j)
+              #endif
+            #endif
+          #endif
+        #endif
+      #endfor
+      del_list.sort()
+      del_list = reversed(del_list)
+      for i in del_list:
+        del track[i]
+    #endfor 
+    self.check_duration()   
+  #enddef
+  
+  def top_notes(self,ti,overlap_tolerance):
+    track = self.tracks[ti]
+    self.selected = []
+    for ni in range(len(track)):
+      env = track[ni]
+      if env[1] == 0:
+        continue   #ignore noteoff events
+      #endif
+      mid_tm = int((env[2] +env[3])/2)
+      si = max(0,ni - 10)
+      ei = min(len(track)-1,ni+10)
+      higher = True #assumption
+      for mi in range(si,ei):
+        if mi == ni:
+          continue  #don't compare with self
+        #endif
+        print(f"Testing {ni} against {mi}")
+        env2 = track[mi]
+        if env2[1] == 0:
+          continue  #ignore noteoff 
+        #endif
+        print(env,env2)
+        # does env2 start before env ends and ends after env starts  
+        if (env[3]-env2[2]) > overlap_tolerance and (env2[3]-env[2]) > overlap_tolerance:  #overlap
+          print("Overlap")
+          if env2[0] > env[0]:  #this other note is higher
+            higher = False
+            print("Not higher")
+            break
+          #endif
+        #endif
+      #endfor  #finished scanning nearby notes
+      if higher:
+        print("Add highest:",ni)
+        self.selected.append(ni*128 + ti)
+    #endfor       
+  #enddef
+    
+  def smash(self,begin_tm,end_tm):
+    self.push_tune()
+    self.selected = []
+    dt = end_tm - begin_tm
+    to_delete = []
+    copy_edit_history = list(self.edit_history)
+    for ti,track in enumerate(self.tracks):
+      ttrack = list(track)  #make a copy - hoping this makes things more stable
+      for ei,env in enumerate(ttrack):
+        if env[1] == 0:
+          continue
+        #endif
+        j = self.find_matching_noteoff(ei+1,env[0],track)
+        if env[2] < begin_tm:
+          print("Note is before begin")
+          if env[3] > begin_tm:
+            print("Note finishes after begin")
+            #self.delete_note(ti,ei)
+            #self.insert_note(env[0],env[1],env[2],begin_tm,ti)
+            #the following would be quicker but is irreversable
+            track[ei] = (env[0],env[1],env[2],begin_tm)
+            if j > 0:
+              track[j] = (env[0],0,begin_tm,env[2])
+            #endif
+          #endif
+          continue
+        #endif
+        if env[2] < end_tm:
+          print("Note starts before fini")
+          if env[3] > end_tm:
+            print("Note ends after fini")
+            #self.delete_note(ti,ei)
+            #self.insert_note(env[0],env[1],end_tm-dt,env[3]-dt,ti)
+            #the following would be quicker but is irreversable
+            track[ei] = (env[0],env[1],end_tm-dt,env[3]-dt)
+            if j > 0:
+              track[j] = (env[0],env[1],env[3]-dt,end_tm-dt)
+            #endif
+            continue
+          else:
+            print("Note is within smash")
+            to_delete.append(ei)
+          #endif
+        else:
+          print("Note is after smash")  
+          #self.delete_note(ti,ei)
+          #self.insert_note(env[0],env[1],env[2]-dt,env[3]-dt,ti)
+          #the following would be quicker but is irreversable
+          track[ei] = (env[0],env[1],env[2]-dt,env[3]-dt)
+          if j > 0:
+            track[j] = (env[0],0,env[3]-dt,env[2]-dt)
+          #endif
+        #endif
+      #endfor
+      to_delete.sort()
+      for ni in reversed(to_delete):
+        self.delete_note(ti,ni)
+      #endfor
+    #endfor
+    #restore history
+    self.edit_history = copy_edit_history   #didn't need to know all those deletes.
+    self.rec_history((begin_tm,dt,3))
+    self.duration -= dt      
   #enddef
         
 #endclass

@@ -1,0 +1,32 @@
+TeenyComposer Change log
+- added play by click on piano keys
+- added middle click move play position
+14/05/2026
+- added Cntrl Z and Cntrl Y = undo and redo for current track
+- added print history using cntrl-H
+- added click and Cntrl+click selection using left button
+15/04/2026
+- added Cntrl X,C,V = cut,copy and paste for current selection
+- added track edit button and trim front and trim rear
+- added select highest
+16/05/2026
+- added move track octave up and down
+- added invert selection
+- added print track using cntrl-T
+- added print selecting using cntrl-S
+- bug:blank track names labelled at track#
+- bug:was stopping immediately for blank tracks
+- bug:adjusting selection points after insert
+- cntrl-click to toggle selection
+17/05/2026
+- bug in process action for delete where selection is being updated
+- bug in save midi for temp save
+- bug in selection invert not ignoring noteoff events
+- added print track errors to identify noteon without previous noteoff
+- added snap to quarter note/beat
+- bug in cursor time
+- added begin and fini time bars
+- added smash to remove period between time bars
+18/05/2026
+- fixed bugs in smash undo by adding tune stack
+- if anything has been selected then only selected is shifted
