@@ -261,7 +261,7 @@ class midiParser():
     self.tracks.append([],)
     self.track_show.append(True)
     self.track_mute.append(False)
-    self.track_solo.append(False)
+    self.track_solo = -1
   #enddef
   
   def print_track(self,ti):
@@ -488,6 +488,67 @@ class midiParser():
     #endfor  
   #enddef
   
+  def shift_selected(self,dtm,dnote):
+    # shift notes for graphic purposes - correct_note_order must be called later 
+    print("dtm:",dtm)
+    for si in self.selected:
+      ti = si & 0x7f
+      ni = si>>7
+      env = self.tracks[ti][ni]
+      j = self.find_matching_noteoff(ni+1,env[0],self.tracks[ti])
+      #print(f"For track {ti} index {ni} found note_off at:{j}")
+      self.tracks[ti][ni] = (env[0] + dnote,env[1],env[2] + dtm,env[3] + dtm)
+      if j > 0:
+        self.tracks[ti][j] = (env[0] + dnote,0,env[3] + dtm,env[2] + dtm)
+      #endif
+    #endfor
+  #enddef
+  
+  def correct_note_order(self):
+    for ti,track in enumerate(self.tracks):
+      for ci in range(1000):  # for small moves, this is probably the fastes way
+        print("Corrections pass:",ci)
+        error_found = False
+        prev_env = None
+        for ni,env in enumerate(track):
+          if ni > 0 and env[2] < prev_env[2]:
+            #these two are out of order, so swap
+            print(f"Swap {ni} for {ni-1}")
+            error_found = True
+            track[ni-1] = env
+            track[ni] = prev_env
+            #swap selected indexes
+            ei1 = (ni-1)*128 + ti
+            ei2 = ni*128 + ti
+            if ei1 in self.selected:
+              i1 = self.selected.index(ei1)
+            else:
+              i1 = -1
+            #end
+            if ei2 in self.selected:
+              i2 = self.selected.index(ei2)
+            else:
+              i2 = -1
+            #endif
+            if i1 >= 0:            
+              self.selected[i1] = ei2
+              print(f"Selected at {i1} altered to {ei2}")
+            #endif
+            if i2 >= 0:  
+              self.selected[i2] = ei1
+              print(f"Selected at {i2} altered to {ei1}")
+            #endif
+          else:
+            prev_env = env
+          #endif
+        #endfor
+        if not error_found:
+          break
+        #endif
+      #endwhile  
+    #endfor
+  #enddef
+    
   def process_selected(self,action,nti):
     i = 0
     while i <  len(self.selected):
@@ -537,7 +598,9 @@ class midiParser():
     for env in self.clipboard:
       s_tm = env[2] - start_tm + paste_tm
       e_tm = s_tm + env[3] - env[2]
-      self.insert_note(env[0],env[1],s_tm,e_tm,ti)
+      i = self.insert_note(env[0],env[1],s_tm,e_tm,ti)
+      if i >= 0:
+        self.selected.append(i*128 + ti)
     #endfor
   #enddef
   
@@ -569,6 +632,7 @@ class midiParser():
   
   def delete_selected(self,ti):
     self.process_selected(self.delete_note,ti)
+    self.selected = []
   #enddef
   
   def adjust_selected(self,ti,i,di):
@@ -675,6 +739,7 @@ class midiParser():
     self.duration = max(self.duration,end_tm)
     self.check_range(note_env[0])
     i = 0
+    ri = -1 #return position of the new note
     track = self.tracks[ti]
     while i < len(track):
       env = track[i]
@@ -688,19 +753,24 @@ class midiParser():
           self.tracks[ti].append(note_env)
         #endif
         if note_env[1] == 0:  #vel already set to 0 so this is noteoff
-          return  #note off has already been inserted
+          return ri #note off has already been inserted
         note_env = (n,0,end_tm,start_tm)   #note reversal of time for noteoff
         #keep going and look for place to add note off
+        if note_env[1] > 0:
+          ri = i;
+        #endif
       #endif
       i += 1
     #endwhile
     #this noteon or note off is going onto the end
     self.rec_history((ti,len(self.tracks[ti]),0,tuple(note_env)))
     self.tracks[ti].append(note_env)
+    ri = i
     if note_env[1] != 0:  #vel is not zero yet, so need to add note off
       note_env = (note_env[0],0,note_env[3],note_env[2])   #note reversal of time for noteoff
       track.append(note_env)
     #endif
+    return i;
   #enddef 
   
   def transpose_all(self,delta):
@@ -880,6 +950,24 @@ class midiParser():
     self.edit_history = copy_edit_history   #didn't need to know all those deletes.
     self.rec_history((begin_tm,dt,3))
     self.duration -= dt      
+  #enddef
+  
+  def stretch(self,begin_tm,end_tm):
+    self.push_tune()
+    self.selected = []
+    dt = end_tm - begin_tm
+    to_delete = []
+    copy_edit_history = list(self.edit_history)
+    for ti,track in enumerate(self.tracks):
+      ttrack = list(track)  #make a copy - hoping this makes things more stable
+      for ei,env in enumerate(ttrack):
+        if env[2] < begin_tm or env[3] < begin_tm:  #don't stretch notes
+          print("Note is before begin")
+          continue
+        #endif
+        track[ei] = (env[0],env[1],env[2]+dt,env[3]+dt)
+      #endfor
+    #endfor
   #enddef
         
 #endclass

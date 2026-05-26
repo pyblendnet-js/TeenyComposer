@@ -30,3 +30,8 @@ TeenyComposer Change log
 18/05/2026
 - fixed bugs in smash undo by adding tune stack
 - if anything has been selected then only selected is shifted
+23/05/2026
+- bug: track solo
+26/05/2026
+- added left button drag selected notes feature
+- added stretch by gap between begin and fini tags

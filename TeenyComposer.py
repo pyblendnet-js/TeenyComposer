@@ -74,6 +74,7 @@ class TeenyComposer(tk.Tk):
     rect = None
     control_pressed = False
     shift_pressed = False
+    zero_move = True
     
     render = None
 
@@ -219,6 +220,8 @@ class TeenyComposer(tk.Tk):
         self.edit_track_btn.place(x=870,y=40)
         self.smash_btn = tk.Button(self, text='Smash', bd='4', command=self.smash)
         self.smash_btn.place(x=800,y=90)
+        self.stretch_btn = tk.Button(self, text='Stretch', bd='4', command=self.stretch)
+        self.stretch_btn.place(x=900,y=90)
         
         #self.bind("<Configure>", self.on_window_resize) - too many false triggers
         self.bind("<Key>", self.key_press)
@@ -305,10 +308,10 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def key_press(self,event):
-        print("Keyboard event:",event)
-        print("State:",event.state)
+        #print("Keyboard event:",event)
+        #print("State:",event.state)
         if (event.state & 4) != 0:  # 'Control' 
-          print("Control actions")
+          #print("Control actions")
           if event.keysym == 'z':  #cntrl + z
             print("Undo")
             parser.undo()
@@ -329,24 +332,30 @@ class TeenyComposer(tk.Tk):
           elif event.keysym == 'x':  # cntrl + x
             print("Cut")
             parser.cut_selected(self.edit_track)
+            self.refresh()
           elif event.keysym == 'v':  # cntrl + v
             print("Paste")
             parser.paste_clipboard(self.edit_track,self.cursor_time)
-            self.refresh() 
+            self.refresh()
+          else:
+            print("Control + Keyboard event:",event) 
           #endif
-        #endif 
-        if event.keysym== 'Delete':
-          print("Delete")
-          parser.delete_selected(self.edit_track)
-          self.refresh() 
-        elif event.keysym== 'Insert':
-          print("Insert - does nothing at present - maybe add beat in track")
-        elif event.keysym=='Control_L' or event.keysym=='Control_R':
-          print("Control on")
-          self.control_pressed = True          
-        elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
-          print("Shift on")
-          self.shift_pressed = True          
+        else:
+          if event.keysym== 'Delete':
+            print("Delete")
+            parser.delete_selected(self.edit_track)
+            self.refresh() 
+          elif event.keysym== 'Insert':
+            print("Insert - does nothing at present - maybe add beat in track")
+          elif event.keysym=='Control_L' or event.keysym=='Control_R':
+            print("Control on")
+            self.control_pressed = True          
+          elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
+            print("Shift on")
+            self.shift_pressed = True          
+          else:
+            print("Keyboard event:",event) 
+          #endif
         #endif        
     #enddef
     
@@ -463,7 +472,7 @@ class TeenyComposer(tk.Tk):
         tm_wide = self.end_tm - self.start_tm
         self.x_scale = show_width/tm_wide
         for ti,track in enumerate(parser.tracks):
-          print("Display track stave:",ti)
+          #print("Display track stave:",ti)
           if parser.track_show[ti]:
             for ei,env in enumerate(track):
               if env[1] == 0:  #ignore noteoff events
@@ -550,7 +559,7 @@ class TeenyComposer(tk.Tk):
         self.canvas.create_line(self.note_start_x,self.first_note_line_y,self.note_start_x,y,width=4)
         for ti,track in enumerate(parser.tracks):
           if parser.track_show[ti]:
-            print("Display track:",ti)
+            #print("Display track:",ti)
             for ei,env in enumerate(track):
               #print("Show note:",env)
               if env[1] == 0:  #ignore noteoff events
@@ -609,6 +618,7 @@ class TeenyComposer(tk.Tk):
         self.start_x = event.x
         self.start_y = event.y
         self.start_typ = event.num
+        self.zero_move = True
         if event.num == 1 and self.control_pressed:  #for multi select
           self.start_typ = 3
         #endif
@@ -642,6 +652,7 @@ class TeenyComposer(tk.Tk):
         if abs(dx) < 2 and abs(dy) < self.note_height:
           return
         #endif
+        self.zero_move = False
         if self.start_typ == 2:  #drag view
           #print(dx,dy)
           self.start_x = event.x
@@ -658,6 +669,20 @@ class TeenyComposer(tk.Tk):
             self.max_note = self.min_note + note_high
           #endif
           self.refresh()
+          return
+        #endif
+        if self.start_typ == 1 and len(parser.selected) > 0:
+          dnote = math.floor(-dy/self.note_height)
+          dtm = dx/self.x_scale
+          if self.snap:
+            dtm = dtm/self.ticks_per_beat*self.ticks_per_beat;
+          #endif
+          dtm = round(dtm)  
+          parser.shift_selected(dtm,dnote)
+          #print(f"Shift:{dtm,dnote}")
+          self.refresh()
+          self.start_x += dtm*self.x_scale
+          self.start_y -= dnote*self.note_height
           return
         #endif
         if not self.rect:
@@ -725,7 +750,8 @@ class TeenyComposer(tk.Tk):
         dx = event.x - self.start_x
         dy = event.y - self.start_y
         #print("****************",dx,dy)
-        if abs(dx) < 2 and abs(dy) < self.note_height:
+        if self.zero_move:
+          print("No move")
           if event.num == 2:  #move the time cursor
             y1 = self.first_note_line_y
             y2 = self.last_note_line_y
@@ -736,11 +762,13 @@ class TeenyComposer(tk.Tk):
               tm = int(round(tm / parser.ticks_per_beat) * parser.ticks_per_beat)
             if self.control_pressed:
               self.begin_time = tm
+              print("Begin time=",tm)
               #if self.begin_line:
               #  self.canvas.coords(self.begin_line, event.x, y1, event.x, y2)
               #endif
             elif self.shift_pressed:
               self.fini_time = tm
+              print("Fini time=",tm)
               #if self.fini_line:
               #  self.canvas.coords(self.fini_line, event.x, y1, event.x, y2)
               #endif
@@ -766,6 +794,13 @@ class TeenyComposer(tk.Tk):
             self.refresh()
           #endif
           return
+        else:
+          if self.start_typ == 1 and len(parser.selected) > 0:
+            print("Correct order")
+            parser.correct_note_order()  #things may have got muddled during a shift_selected
+            self.refresh()
+            return
+          #endif
         #endif  
         if event.num == 3:
           zoom_tm = True
@@ -1109,6 +1144,11 @@ class TeenyComposer(tk.Tk):
       self.refresh()
     #enddef
     
+    def stretch(self):
+      parser.stretch(self.begin_time,self.fini_time)
+      self.refresh()
+    #enddef
+    
     def track_combo_change(self,ev):
       print("Change:",ev)
       self.edit_track = self.track_combo.current()
@@ -1116,7 +1156,7 @@ class TeenyComposer(tk.Tk):
       print("Track " + self.track_combo.get() + "selected ",self.edit_track)
       self.track_show_var.set(parser.track_show[self.edit_track])
       self.track_mute_var.set(parser.track_mute[self.edit_track])
-      self.track_solo_var.set(parser.track_solo == self.edit_track)
+      self.track_solo_var.set(False) #otherwise too confusing
     #enddef
     
     def track_program_combo_change(self,ev):
