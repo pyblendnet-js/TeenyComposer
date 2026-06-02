@@ -38,7 +38,7 @@ class midiParser():
     print(f"Ticks per Beat: {self.ticks_per_beat}")
     #self.temp = self.midi_file.tempo
     #print(f"Tempo: {self.tempo} uSec/quarter note")
-    print(dir(self.midi_file))
+    #print(dir(self.midi_file))
     self.edit_history = []
     self.undo_index =0
     self.select = []
@@ -59,13 +59,20 @@ class midiParser():
       #endif  
       track.append(Message('program_change', program=self.track_program[ti], time=0))
       ltm = 0
+      note_i = [-1,]*128    #-1 to indicate no note on for this note yet
       for env in self.tracks[ti]:
         dtm = env[2] - ltm  # delta time since last event
         ltm = env[2]
         if env[1] == 0:  #note off event
-          track.append(Message('note_off', note=env[0], velocity=0, time=int(dtm)))
+          if note_i[env[0]] > 0:
+            track.append(Message('note_off', note=env[0], velocity=0, time=int(dtm)))
+            note_i[env[0]] = -1
+          else:
+            print("Ignoring note_off without note_on")
+          #endif
         else:
           track.append(Message('note_on', note=env[0], velocity=env[1], time=int(dtm)))
+          note_i[env[0]] = 1
         #endif
       #endfor
     #endfor 
@@ -83,7 +90,7 @@ class midiParser():
     for ti, track in enumerate(self.midi_file.tracks):
         print(f'Track {ti}: {track.name}')
         #print(track.name, target_track)
-        note_i = [0,]*128
+        note_i = [-1,]*128    #-1 to indicate no note on for this note yet
         tm = 0
         if target_track == "" or track.name == target_track:
           if len(track.name) > 0:
@@ -125,10 +132,15 @@ class midiParser():
                 if msg.type == "note_on" and vel > 0:
                   note_i[n] = len(self.tracks[ti])
                   self.tracks[ti].append((n,vel,tm,0))  #track, note, vel, start_time, temp end_time - replaced once we know
+                elif note_i[n] < 0:
+                  print("Deleting noteoff without noteon")
                 else:
                   env = self.tracks[ti][note_i[n]]  #get the note on event that should exist
+                  print("Correcting start note end at:",note_i[n]," to ",tm) 
                   self.tracks[ti][note_i[n]] = (env[0],env[1],env[2],tm)  #append end time to that event
                   self.tracks[ti].append((n,0,tm,env[2])) #note end = note, vel=0, end_time, start_time  (note reversal)
+                  note_i[n] = -1
+                #endif
                 if self.verbose:
                   print(tm,n)
               #endif
