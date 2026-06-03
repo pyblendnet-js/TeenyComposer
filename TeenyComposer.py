@@ -1,6 +1,6 @@
 # Inspired by Source - https://stackoverflow.com/a/24136884 Posted by Marcin, modified by community. See post 'Timeline' for change history Retrieved 2026-04-29, License - CC BY-SA 3.0
 
-from tkinter import filedialog, simpledialog
+from tkinter import filedialog, simpledialog, messagebox
 from tkinter import ttk
 import tkinter as tk # this is in python 3.4. For python 2.x import Tkinter
 from PIL import Image, ImageTk
@@ -9,6 +9,7 @@ import midoMidi
 #import fluidsynth
 import fluid
 from datetime import datetime
+import platform
 
 parser = midoMidi.midiParser()
 synth = fluid.fluid()
@@ -23,7 +24,7 @@ def getNoteName(midi_note):
     nm += "# ="
   else:
     nm += "_ ="
-  nm += str(midi_note)     
+  nm += str(midi_note)
   return nm
 #enddef
 
@@ -79,7 +80,14 @@ class TeenyComposer(tk.Tk):
     render = None
 
     def __init__(self):
-        tk.Tk.__init__(self)
+        root = tk.Tk.__init__(self)
+        if platform.system() == "Linux":
+          self.bind("<Button-4>", self.mouse_wheel)    # For Linux
+          self.bind("<Button-5>", self.mouse_wheel)    # For Linux
+        else:
+          self.bind("<MouseWheel>", mouse_wheel)  # For Windows
+        #endif
+
         self.title("TeenyComposer")
         self.x = self.y = 0
         self.canvas = tk.Canvas(self, width=self.wide, height=self.high, cursor="cross")
@@ -107,19 +115,21 @@ class TeenyComposer(tk.Tk):
         self.stave_btn.place(x=150,y=0)
         lbl = tk.Label(self, text="Midi:")
         lbl.place(x=260,y=0)
-        self.load_btn = tk.Button(self, text='Load', bd='4', command=self.load_midi)
+        self.load_btn = tk.Button(self, text='New', bd='4', command=self.new_midi)
         self.load_btn.place(x=300,y=0)
+        self.load_btn = tk.Button(self, text='Load', bd='4', command=self.load_midi)
+        self.load_btn.place(x=370,y=0)
         self.save_btn = tk.Button(self, text='Save', bd='4', command=self.save_midi)
-        self.save_btn.place(x=380,y=0)
+        self.save_btn.place(x=440,y=0)
         self.saveas_btn = tk.Button(self, text='SaveAs', bd='4', command=self.saveas_midi)
-        self.saveas_btn.place(x=460,y=0)
+        self.saveas_btn.place(x=510,y=0)
         lbl = tk.Label(self, text="Track:")
         lbl.place(x=655,y=0)
         self.load_track_btn = tk.Button(self, text='Load', bd='4', command=self.load_track)
         self.load_track_btn.place(x=700,y=0)
         self.saveas_track_btn = tk.Button(self, text='SaveAs', bd='4', command=self.saveas_track)
         self.saveas_track_btn.place(x=780,y=0)
-        btn = tk.Button(self, text='Quit', bd='4', command=self.destroy)
+        btn = tk.Button(self, text='Quit', bd='4', command=self.quit)
         btn.place(x=900,y=0)
         self.left_btn = tk.Button(self, text='<', bd='4', command=self.shift_left)
         self.left_btn.place(x=self.note_start_x,y=self.high-50)
@@ -237,14 +247,36 @@ class TeenyComposer(tk.Tk):
         self.refresh()
     #enddef
     
+    def checkForSave(self):
+      if len(parser.edit_history) > 0:
+        answer = messagebox.askyesnocancel("Quit", "Do you want to save your changes?")
+        if answer == None:
+          return False
+        #endif
+        if answer:
+          if not self.saveas_midi():
+            return False #no file selected or canceled
+          #endif
+        #endif
+      #endif
+      return True
+    #enddef
+    
+    def quit(self):
+      if self.checkForSave():
+        self.destroy()
+      #endif
+    #endif
+    
     def trim_front(self):
         print("Trim front")
         parser.trim_tm(self.cursor_time,True)
+        self.cursor_time = 0
         self.refresh()
     #enddef
     
     def trim_rear(self):
-        print("Trim front")
+        print("Trim rear")
         parser.trim_tm(self.cursor_time,False)
         self.refresh()
     #enddef
@@ -341,7 +373,10 @@ class TeenyComposer(tk.Tk):
             print("Control + Keyboard event:",event) 
           #endif
         else:
-          if event.keysym== 'Delete':
+          if event.keysym== 'Tab':
+            self.edit_track = (self.edit_track + 1) % len(parser.tracks)
+            self.track_combo.current(self.edit_track)
+          elif event.keysym== 'Delete':
             print("Delete")
             parser.delete_selected(self.edit_track)
             self.refresh() 
@@ -367,6 +402,34 @@ class TeenyComposer(tk.Tk):
           print("Shift off")
           self.shift_pressed = False          
         #endif        
+    #enddef
+    
+    def mouse_wheel(self,event):
+      print("ScrollState:",event.state)
+      dtm = self.end_tm - self.start_tm
+      if event.num == 4:
+        print("4=Up")
+        if (event.state & 1) != 0: #shift to increase ticks_per_beat
+          parser.ticks_per_beat = int(parser.ticks_per_beat * 1.01)
+        elif (event.state & 4) != 0:  #cntrl for zoom out
+          self.end_tm = self.start_tm + dtm*1.1
+        else:
+          self.start_tm = max(0,self.start_tm - dtm*0.1)
+          self.end_tm = self.start_tm + dtm
+        #endif
+        self.refresh()
+      elif event.num == 5:
+        print("5=Dn")
+        if (event.state & 1) != 0: #shift to decrease ticks_per_beat
+          parser.ticks_per_beat = int(parser.ticks_per_beat / 1.01)
+        elif (event.state & 4) != 0: #cntrl for zoom in
+          self.end_tm = self.start_tm + dtm/1.1
+        else:  #scroll right
+          self.start_tm = max(0,self.start_tm + dtm*0.1)
+          self.end_tm = self.start_tm + dtm
+        #endif
+        self.refresh()
+      #endif
     #enddef
     
     def on_window_resize(self, event):  # not used as gets false events
@@ -922,13 +985,22 @@ class TeenyComposer(tk.Tk):
         self.refresh()
     #enddef 
     
+    def new_midi(self):
+      if self.checkForSave():
+        parser.clear()
+        self.track_combo.config(values = parser.track_nms)
+        self.track_combo.current(0)
+        self.track_program_combo.current(parser.track_program[0])
+      #endif
+      self.refresh()
+    #enddef
+    
     def load_midi(self):
       self.filename = filedialog.askopenfilename(filetypes = (("Midi","*.mid"),("All files","*.*")))
       if self.filename:
           # Read and print the content (in bytes) of the file.
           #print(self.filename)
           parser.load(self.filename)
-          parser.scan()
           self.play_step = parser.tempo / parser.ticks_per_beat / 1000
           self.speed_lbl.config(text= f"{self.play_step:0.2f} mS/tick")
           self.title("TeenyComposer = " + self.filename)
@@ -983,8 +1055,10 @@ class TeenyComposer(tk.Tk):
           #print(self.filename)
           parser.save(self.filename)
           self.title("TeenyComposer = " + self.filename)
+          return True
       else:
           print("No file selected.")
+          return False
       #endif
     #enddef
     

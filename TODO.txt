@@ -1,0 +1,6 @@
+Add EditSong
+In edit song, edit time signature
+Ranges to auto switch tracks?
+Zoom in zoom out buttons
+Bug:Couldn't cancel solo on third track
+

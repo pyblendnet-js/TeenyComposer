@@ -31,7 +31,31 @@ class midiParser():
   
   #1000 would be one beat per second at default tempo
   
+  def clear(self):
+    self.min_note = 0
+    self.max_note = -1
+    self.duration = 0
+    self.tracks = [[],]  #first empty track
+    self.track_nms = ["track1",]
+    self.track_program = [0,]
+    self.track_show = [True,]
+    self.track_mute = [False,]
+    self.track_solo = -1 #otherwise is track so solo
+    self.edit_history = []
+    self.undo_index = 0
+    self.selected = []
+    self.clipboard = []
+    self.tune_stack = []
+    self.ticks_per_beat = 480
+    self.tempo =600000    # uSec per per quarter note
+    self.numerator = 4
+    self.denominator = 4
+    self.clocks_per_click = 24
+    self.notated_32nd_notes_per_beat = 8
+  #enddef
+  
   def load(self,fid):
+    self.clear()
     self.midi_file = MidiFile(fid)
     print(f"MIDI Type: {self.midi_file.type}")
     self.ticks_per_beat = self.midi_file.ticks_per_beat
@@ -39,12 +63,13 @@ class midiParser():
     #self.temp = self.midi_file.tempo
     #print(f"Tempo: {self.tempo} uSec/quarter note")
     #print(dir(self.midi_file))
-    self.edit_history = []
-    self.undo_index =0
-    self.select = []
+    self.scan()
   #enddef
   
   def save(self,fid):
+    if not fid.endswith(".mid"):
+      fid += ".mid"
+    #endif  
     mid = MidiFile()
     for ti,track_nm in enumerate(self.track_nms):
       track = MidiTrack()
@@ -155,6 +180,9 @@ class midiParser():
   #enddef
 
   def save_track(self,fid,track_nr=0):
+    if not fid.endswith(".trk"):
+      fid += ".trk"
+    #endif
     with open(fid,"w") as f:
       f.write(f"program={self.track_program[track_nr]}\n")
       f.write(f"ticks_per_beat={self.ticks_per_beat}\n")
@@ -831,25 +859,36 @@ class midiParser():
       #endif
       del_list = []
       for i,env in enumerate(track):
-        if env[1] > 0:
-          if before:
-            if env[2] < tm:
-              del_list.append(i)
-              j = self.find_matching_noteoff(i+1,env[0],track)
-              if j > 0:
-                del_list.append(j)
-              #endif
+        if before:
+          if env[2] < tm: #starts before cutoff
+            if env[1] > 0: #not noteoff
+              if env[3] >= tm: #ends after cutoff
+                track[i] = (env[0],env[1],0,env[3]-tm)
+                j = self.find_matching_noteoff(i+1,env[0],track)
+                if j > 0:
+                  track[j] = (env[0],0,env[2]-tm,0)
+                #endif
+              else:
+                del_list.append(i)
+              #endif  
             else:
-              track[i] = (env[0],env[1],env[2]-tm,env[3]-tm)
-            #endif
-          else:
-            if env[2] > tm:
               del_list.append(i)
-              j = self.find_matching_noteoff(i+1,env[0],track)
-              if j > 0:
-                del_list.append(j)
+          else:
+            track[i] = (env[0],env[1],env[2]-tm,env[3]-tm)
+          #endif
+        else:  #trim after
+          if env[2] <= tm:  #keep everything before this time
+            if env[1] > 0: #not noteoff
+              if env[3] > tm:
+                track[i] = (env[0],env[1],env[2],tm)
+                j = self.find_matching_noteoff(i+1,env[0],track)
+                if j > 0:
+                  track[j] = (env[0],0,tm,env[2])
+                #endif
               #endif
-            #endif
+            #endif  
+          else:
+            del_list.append(i)
           #endif
         #endif
       #endfor

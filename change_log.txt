@@ -35,3 +35,11 @@ TeenyComposer Change log
 26/05/2026
 - added left button drag selected notes feature
 - added stretch by gap between begin and fini tags
+3/06/2026
+- force save to end fid with .mid
+- force save_track to end fid with .trk
+- request save on quiting
+- correct front and rear trimming
+- added "New" button to clear midi after save check
+- Tab to switch edit track
+- Scroll wheel to scroll time / or with cntrl=zoom in and out / or with shift to change ticks per beat
