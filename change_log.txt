@@ -43,3 +43,15 @@ TeenyComposer Change log
 - added "New" button to clear midi after save check
 - Tab to switch edit track
 - Scroll wheel to scroll time / or with cntrl=zoom in and out / or with shift to change ticks per beat
+4/06/2026
+- bug with scroll wheel on Windows.
+- Same functions as scroll wheel using the left and right buttons at bottom of screen
+- control + shift + middle click will clear begin and end time
+- bug in snap tick box
+5/06/2026
+- bug in song smash
+- prevent mouse scroll while mouse button pressed
+- converted smash function into general trim function
+6/06/2026
+- bug when note after trim area
+- control or shift used to fix direction of selected drag

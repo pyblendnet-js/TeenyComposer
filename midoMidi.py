@@ -370,7 +370,7 @@ class midiParser():
       #track = self.tracks[edit[0]]
       if edit[2] == 3:  #full copy
         self.pop_tune()
-        self.duration += edit[1]
+        self.check_duration()
         #self.begin_time = edit[0]
         #self.fini_time += edit[1]
       else:
@@ -530,7 +530,7 @@ class midiParser():
   
   def shift_selected(self,dtm,dnote):
     # shift notes for graphic purposes - correct_note_order must be called later 
-    print("dtm:",dtm)
+    #print("dtm:",dtm)
     for si in self.selected:
       ti = si & 0x7f
       ni = si>>7
@@ -852,7 +852,7 @@ class midiParser():
     #endif
   #enddef  
   
-  def trim_tm(self,tm,before=True):
+  '''def trim_tm(self,start_tm,end_tm):
     for ti,track in enumerate(self.tracks):
       if not self.track_show[ti]:
         continue
@@ -898,7 +898,7 @@ class midiParser():
         del track[i]
     #endfor 
     self.check_duration()   
-  #enddef
+  #enddef'''
   
   def top_notes(self,ti,overlap_tolerance):
     track = self.tracks[ti]
@@ -937,73 +937,133 @@ class midiParser():
         self.selected.append(ni*128 + ti)
     #endfor       
   #enddef
+  
+  def select_tm_range(self,begin_tm,end_tm,ti):
+    track = self.tracks[ti]
+    for ei,env in enumerate(track):
+      if env[1] > 0 and env[2] >= begin_tm and env[3] <= end_tm:
+        self.selected.append(ei*128 + ti)
+      #endif
+    #endfor
+  #enddef
     
-  def smash(self,begin_tm,end_tm):
-    self.push_tune()
+  def trim_tune_tm(self,begin_tm,end_tm):
+    self.push_tune()  #in the hope of allowing undo
     self.selected = []
-    dt = end_tm - begin_tm
-    to_delete = []
     copy_edit_history = list(self.edit_history)
-    for ti,track in enumerate(self.tracks):
-      ttrack = list(track)  #make a copy - hoping this makes things more stable
-      for ei,env in enumerate(ttrack):
-        if env[1] == 0:
-          continue
-        #endif
-        j = self.find_matching_noteoff(ei+1,env[0],track)
-        if env[2] < begin_tm:
-          print("Note is before begin")
-          if env[3] > begin_tm:
-            print("Note finishes after begin")
-            #self.delete_note(ti,ei)
-            #self.insert_note(env[0],env[1],env[2],begin_tm,ti)
-            #the following would be quicker but is irreversable
+    for ti in range(len(self.tracks)):
+      self.trim_track_tm(begin_tm,end_tm,ti,False)
+    #endfor
+    #restore history
+    self.edit_history = copy_edit_history   #didn't need to know all those deletes.
+    self.rec_history((0,0,3))
+    #self.duration -= dt 
+    self.check_duration()       
+  #enddef
+    
+  def trim_track_tm(self,begin_tm,end_tm,ti,record_this=True):
+    dt = end_tm - begin_tm
+    print(f"Trim track {ti} between {begin_tm} and {end_tm} = delta {dt}")
+    track = self.tracks[ti]  
+    to_delete = []
+    ttrack = list(track)  #make a copy - hoping this makes things more stable
+    if record_this:
+      copy_edit_history = list(self.edit_history)
+    #endif
+    for ei,env in enumerate(ttrack):
+      if env[1] == 0:  #note off event
+        continue
+      #endif
+      j = self.find_matching_noteoff(ei+1,env[0],track)
+      if env[2] < begin_tm:
+        print("Note is before begin")
+        if env[3] > begin_tm:
+          print("Note finishes after begin")
+          if env[3] > end_tm:
+            track[ei] = (env[0],env[1],env[2],env[3]-dt)
+            if j > 0:
+              track[j] = (env[0],0,env[3]-dt,env[2])
+            #endif
+          else:
             track[ei] = (env[0],env[1],env[2],begin_tm)
             if j > 0:
               track[j] = (env[0],0,begin_tm,env[2])
             #endif
           #endif
-          continue
         #endif
-        if env[2] < end_tm:
-          print("Note starts before fini")
-          if env[3] > end_tm:
-            print("Note ends after fini")
-            #self.delete_note(ti,ei)
-            #self.insert_note(env[0],env[1],end_tm-dt,env[3]-dt,ti)
-            #the following would be quicker but is irreversable
-            track[ei] = (env[0],env[1],end_tm-dt,env[3]-dt)
-            if j > 0:
-              track[j] = (env[0],env[1],env[3]-dt,end_tm-dt)
-            #endif
-            continue
-          else:
-            print("Note is within smash")
-            to_delete.append(ei)
-          #endif
-        else:
-          print("Note is after smash")  
+        continue
+      #endif
+      if env[2] < end_tm:
+        print("Note starts before fini")
+        if env[3] > end_tm:
+          print("Note ends after fini")
           #self.delete_note(ti,ei)
-          #self.insert_note(env[0],env[1],env[2]-dt,env[3]-dt,ti)
+          #self.insert_note(env[0],env[1],end_tm-dt,env[3]-dt,ti)
           #the following would be quicker but is irreversable
-          track[ei] = (env[0],env[1],env[2]-dt,env[3]-dt)
+          track[ei] = (env[0],env[1],begin_tm,env[3]-dt)
           if j > 0:
-            track[j] = (env[0],0,env[3]-dt,env[2]-dt)
+            track[j] = (env[0],0,env[3]-dt,begin_tm)
           #endif
+          continue
+        else:
+          print("Note is between begin and fini")
+          to_delete.append(ei)
         #endif
-      #endfor
-      to_delete.sort()
-      for ni in reversed(to_delete):
-        self.delete_note(ti,ni)
-      #endfor
+      else:
+        print("Note is after fini")  
+        #self.delete_note(ti,ei)
+        #self.insert_note(env[0],env[1],env[2]-dt,env[3]-dt,ti)
+        #the following would be quicker but is irreversable
+        track[ei] = (env[0],env[1],env[2]-dt,env[3]-dt)
+        if j > 0:
+          track[j] = (env[0],0,env[3]-dt,env[2]-dt)
+        #endif
+      #endif
     #endfor
-    #restore history
-    self.edit_history = copy_edit_history   #didn't need to know all those deletes.
-    self.rec_history((begin_tm,dt,3))
-    self.duration -= dt      
+    to_delete.sort()
+    for ni in reversed(to_delete):
+      print(f"Delete at {ni} for track {ti}")
+      self.delete_note(ti,ni)
+    #endfor
+    if record_this:
+      self.edit_history = copy_edit_history   #didn't need to know all those deletes.
+      self.rec_history((0,0,3))
+      self.check_duration()       
+    #endif
   #enddef
   
-  def stretch(self,begin_tm,end_tm):
+  def stretch(self,begin_tm,end_tm,stretch_by):
+    print("Stretch by:",stretch_by)
+    self.push_tune()
+    self.selected = []
+    dt = end_tm - begin_tm
+    dt2 = int(dt*(stretch_by-1))
+    to_delete = []
+    copy_edit_history = list(self.edit_history)
+    for ti,track in enumerate(self.tracks):
+      ttrack = list(track)  #make a copy - hoping this makes things more stable
+      for ei,env in enumerate(ttrack):
+        if env[2] < begin_tm or env[3] < begin_tm:  #don't stretch notes
+          print("Note is before begin:",env)
+          continue  
+        elif env[2] >= end_tm:
+          print("Note is past end:",env)
+          track[ei] = (env[0],env[1],env[2]+dt2,env[3]+dt2)
+        else:
+          ts = int((env[2]-begin_tm)*stretch_by + begin_tm)
+          if env[1] > 0 and env[3] > end_tm:
+            te = env[3]
+          else:  
+            te = int((env[3]-begin_tm)*stretch_by + begin_tm)
+          #endif  
+          track[ei] = (env[0],env[1],ts,te)
+          print("Stretch note:",env,track[ei])
+        #endif
+      #endfor
+    #endfor
+  #enddef
+  
+  def spread(self,begin_tm,end_tm):
     self.push_tune()
     self.selected = []
     dt = end_tm - begin_tm

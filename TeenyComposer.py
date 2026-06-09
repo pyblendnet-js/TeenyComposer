@@ -76,6 +76,10 @@ class TeenyComposer(tk.Tk):
     control_pressed = False
     shift_pressed = False
     zero_move = True
+    mouse_pressed = False
+    
+    song_edit_window = None
+    track_edit_window = None
     
     render = None
 
@@ -85,7 +89,7 @@ class TeenyComposer(tk.Tk):
           self.bind("<Button-4>", self.mouse_wheel)    # For Linux
           self.bind("<Button-5>", self.mouse_wheel)    # For Linux
         else:
-          self.bind("<MouseWheel>", mouse_wheel)  # For Windows
+          self.bind("<MouseWheel>", self.mouse_wheel)  # For Windows
         #endif
 
         self.title("TeenyComposer")
@@ -154,7 +158,7 @@ class TeenyComposer(tk.Tk):
         self.snap_var.set(self.snap);
         self.snap_checkbox = ttk.Checkbutton(self, text='snap', variable=self.snap_var,\
           command=self.snap_checkbox_change)
-        self.snap_checkbox.place(x=self.wide/2+250,y=100) 
+        self.snap_checkbox.place(x=self.wide/2+220,y=100) 
         self.min_up_btn = tk.Button(self, text='^', bd='4', command=self.shift_min_up)
         self.min_up_btn.place(x=0,y=self.high-50)
         self.min_down_btn = tk.Button(self, text='v', bd='4', command=self.shift_min_down)
@@ -226,12 +230,10 @@ class TeenyComposer(tk.Tk):
         self.add_track_btn.place(x=650,y=40)
         self.add_track_btn = tk.Button(self, text='Name Track', bd='4', command=self.nm_track)
         self.add_track_btn.place(x=750,y=40)
-        self.edit_track_btn = tk.Button(self, text='Edit Track', bd='4', command=self.track_edit_window)
+        self.edit_track_btn = tk.Button(self, text='Edit Track', bd='4', command=self.open_track_edit_window)
         self.edit_track_btn.place(x=870,y=40)
-        self.smash_btn = tk.Button(self, text='Smash', bd='4', command=self.smash)
-        self.smash_btn.place(x=800,y=90)
-        self.stretch_btn = tk.Button(self, text='Stretch', bd='4', command=self.stretch)
-        self.stretch_btn.place(x=900,y=90)
+        self.smash_btn = tk.Button(self, text='Edit Song', bd='4', command=self.open_song_edit_window)
+        self.smash_btn.place(x=770,y=90)
         
         #self.bind("<Configure>", self.on_window_resize) - too many false triggers
         self.bind("<Key>", self.key_press)
@@ -268,16 +270,45 @@ class TeenyComposer(tk.Tk):
       #endif
     #endif
     
-    def trim_front(self):
-        print("Trim front")
-        parser.trim_tm(self.cursor_time,True)
-        self.cursor_time = 0
+    def trim_tune_front(self):
+        print("Trim tune front")
+        parser.trim_tune_tm(0,self.begin_time)
+        self.fini_time -= self.begin_time
+        self.begin_time = 0
         self.refresh()
     #enddef
     
-    def trim_rear(self):
+    def trim_tune_middle(self):
+        print("Trim tune middle")
+        parser.trim_tune_tm(self.begin_time,self.fini_time)
+        self.fini_time = self.begin_time
+        self.refresh()
+    #enddef
+    
+    def trim_tune_rear(self):
+        print("Trim tune rear")
+        parser.trim_tune_tm(self.fini_time,parser.duration)
+        self.refresh()
+    #enddef
+    
+    def trim_track_front(self):
+        print("Trim front")
+        parser.trim_track_tm(0,self.begin_time,self.edit_track)
+        self.fini_time -= self.begin_time
+        self.begin_time = 0
+        self.refresh()
+    #enddef
+    
+    def trim_track_middle(self):
+        print("Trim middle")
+        parser.trim_track_tm(self.begin_time,self.fini_time,self.edit_track)
+        self.fini_time = self.begin_time
+        self.refresh()
+    #enddef
+    
+    def trim_track_rear(self):
         print("Trim rear")
-        parser.trim_tm(self.cursor_time,False)
+        parser.trim_track_tm(self.fini_time,parser.duration,self.edit_track)
         self.refresh()
     #enddef
     
@@ -311,20 +342,115 @@ class TeenyComposer(tk.Tk):
         self.refresh()
     #enddef
     
-    def track_edit_window(self):
+    def song_edit_closing(self):
+      print("Track edit closing")
+      self.song_edit_window.destroy()
+      self.song_edit_window = None
+    #enddef
+    
+    def select_song_front(self):
+      for ti in range(len(parser.tracks)):  
+        parser.select_tm_range(0,self.begin_time,ti)
+      #endfor
+      self.refresh()
+    #enddef
+    
+    def select_song_middle(self):
+      for ti in range(len(parser.tracks)):  
+        parser.select_tm_range(self.begin_time,self.fini_time,ti)
+      #endfor
+      self.refresh()
+    #enddef
+    
+    def select_song_rear(self):
+      for ti in range(len(parser.tracks)):  
+        parser.select_tm_range(self.fini_time,parser.duration,ti)
+      #endfor
+      self.refresh()
+    #enddef
+    
+    def open_song_edit_window(self):
+        if self.song_edit_window:
+          return
+        #endif
+        se = tk.Toplevel()
+        se.geometry("350x400") 
+        se.title("Song edits")
+        lbl = tk.Label(se, text="Trim:")
+        lbl.place(x=10,y=10)
+        btn = tk.Button(se, text='Front', bd='4', command=self.trim_tune_front)
+        btn.place(x=60,y=10)
+        btn = tk.Button(se, text='Middle', bd='4', command=self.trim_tune_middle)
+        btn.place(x=140,y=10)
+        btn = tk.Button(se, text='Rear', bd='4', command=self.trim_tune_rear)
+        btn.place(x=240,y=10)
+        lbl = tk.Label(se,text="Select all ")
+        lbl.place(x=10,y=50)
+        btn = tk.Button(se, text='Front', bd='4', command=self.select_song_front)
+        btn.place(x=110,y=50)
+        btn = tk.Button(se, text='Middle', bd='4', command=self.select_song_middle)
+        btn.place(x=180,y=50)
+        btn = tk.Button(se, text='Rear', bd='4', command=self.select_song_rear)
+        btn.place(x=260,y=50)
+        btn = tk.Button(se, text='Stretch', bd='4', command=self.stretch)
+        btn.place(x=80,y=100)
+        btn = tk.Button(se, text='Spread', bd='4', command=self.spread)
+        btn.place(x=160,y=100)
+        self.song_edit_window = se
+        se.bind("<Key>", self.key_press)  #keyboard works from both focus
+        se.protocol("WM_DELETE_WINDOW", self.song_edit_closing)      
+    #enddef
+
+    def track_edit_closing(self):
+      print("Track edit closing")
+      self.track_edit_window.destroy()
+      self.track_edit_window = None
+    #enddef
+   
+    def select_track_front(self):
+      parser.select_tm_range(0,self.begin_time,self.edit_track)
+      self.refresh()
+    #enddef
+    
+    def select_track_middle(self):
+      parser.select_tm_range(self.begin_time,self.fini_time,self.edit_track)
+      self.refresh()
+    #enddef
+    
+    def select_track_rear(self):
+      parser.select_tm_range(self.fini_time,parser.duration,self.edit_track)
+      self.refresh()
+    #enddef
+     
+    def open_track_edit_window(self):
+        if self.track_edit_window:
+          return
+        #endif
         te = tk.Toplevel()
         te.geometry("350x400") 
         te.title("Track edits")
-        te.trim_front_btn = tk.Button(te, text='TrimFront', bd='4', command=self.trim_front)
-        te.trim_front_btn.place(x=10,y=10)
-        te.trim_front_btn = tk.Button(te, text='TrimRear', bd='4', command=self.trim_rear)
-        te.trim_front_btn.place(x=10,y=60)
-        te.octave_up_btn = tk.Button(te, text='OctaveUp', bd='4', command=self.octave_up)
-        te.octave_up_btn.place(x=10,y=110)
-        te.octave_dn_btn = tk.Button(te, text='OctaveDown', bd='4', command=self.octave_dn)
-        te.octave_dn_btn.place(x=10,y=160)
-        te.select_highest_btn = tk.Button(te, text='Highest', bd='4', command=self.select_highest)
-        te.select_highest_btn.place(x=10,y=210)
+        lbl = tk.Label(te, text="Trim:")
+        lbl.place(x=10,y=10)
+        btn = tk.Button(te, text='Front', bd='4', command=self.trim_track_front)
+        btn.place(x=60,y=10)
+        btn = tk.Button(te, text='Middle', bd='4', command=self.trim_track_middle)
+        btn.place(x=140,y=10)
+        btn = tk.Button(te, text='Rear', bd='4', command=self.trim_track_rear)
+        btn.place(x=240,y=10)
+        lbl = tk.Label(te, text="Select:")
+        lbl.place(x=10,y=50)
+        btn = tk.Button(te, text='Front', bd='4', command=self.select_track_front)
+        btn.place(x=60,y=50)
+        btn = tk.Button(te, text='Middle', bd='4', command=self.select_track_middle)
+        btn.place(x=140,y=50)
+        btn = tk.Button(te, text='Rear', bd='4', command=self.select_track_rear)
+        btn.place(x=240,y=50)
+        btn = tk.Button(te, text='OctaveUp', bd='4', command=self.octave_up)
+        btn.place(x=10,y=110)
+        btn = tk.Button(te, text='OctaveDown', bd='4', command=self.octave_dn)
+        btn.place(x=10,y=160)
+        btn = tk.Button(te, text='Highest', bd='4', command=self.select_highest)
+        btn.place(x=10,y=210)
         lbl = tk.Label(te, text="Overlap:")
         lbl.place(x=100,y=210)
         self.overlap_var = tk.StringVar()
@@ -337,6 +463,7 @@ class TeenyComposer(tk.Tk):
         te.select_error_btn.place(x=10,y=310)
         self.track_edit_window = te
         te.bind("<Key>", self.key_press)  #keyboard works from both focus
+        te.protocol("WM_DELETE_WINDOW", self.track_edit_closing)      
     #enddef
     
     def key_press(self,event):
@@ -383,10 +510,10 @@ class TeenyComposer(tk.Tk):
           elif event.keysym== 'Insert':
             print("Insert - does nothing at present - maybe add beat in track")
           elif event.keysym=='Control_L' or event.keysym=='Control_R':
-            print("Control on")
+            #print("Control on")
             self.control_pressed = True          
           elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
-            print("Shift on")
+            #print("Shift on")
             self.shift_pressed = True          
           else:
             print("Keyboard event:",event) 
@@ -396,18 +523,36 @@ class TeenyComposer(tk.Tk):
     
     def key_release(self,event):
         if event.keysym=='Control_L' or event.keysym=='Control_R':
-          print("Control off")
+          #print("Control off")
           self.control_pressed = False          
         elif event.keysym=='Shift_L' or event.keysym=='Shift_R':
-          print("Shift off")
+          #print("Shift off")
           self.shift_pressed = False          
         #endif        
     #enddef
     
     def mouse_wheel(self,event):
-      print("ScrollState:",event.state)
+      print("Event:",event)
+      print("State:",event.state)
+      if self.mouse_pressed:
+        return
+      #endif
       dtm = self.end_tm - self.start_tm
-      if event.num == 4:
+      inc = 0
+      if platform.system() == "Linux":
+        if event.num == 4:
+          inc = 1
+        elif event.num == 5:
+          inc = -1
+        #endif
+      else:
+        if event.delta > 0:
+          inc = 1
+        elif event.delta < 0:
+          inc = -1
+        #endif        
+      #endif
+      if inc == 1:
         print("4=Up")
         if (event.state & 1) != 0: #shift to increase ticks_per_beat
           parser.ticks_per_beat = int(parser.ticks_per_beat * 1.01)
@@ -418,7 +563,7 @@ class TeenyComposer(tk.Tk):
           self.end_tm = self.start_tm + dtm
         #endif
         self.refresh()
-      elif event.num == 5:
+      elif inc == -1:
         print("5=Dn")
         if (event.state & 1) != 0: #shift to decrease ticks_per_beat
           parser.ticks_per_beat = int(parser.ticks_per_beat / 1.01)
@@ -430,8 +575,7 @@ class TeenyComposer(tk.Tk):
         #endif
         self.refresh()
       #endif
-    #enddef
-    
+    #enddef    
     def on_window_resize(self, event):  # not used as gets false events
         print("Resize event:",event)
         width = event.width
@@ -443,7 +587,17 @@ class TeenyComposer(tk.Tk):
     def toggle_stave(self):
         self.stave = not self.stave
         self.refresh()
-    #enddef_synth.
+    #enddef_synth
+    
+    def format_tm(self,tm):
+        if self.tm_mode == TIME_RAW:
+          return str(tm)
+        elif self.tm_mode == TIME_BEATS:
+          return "0.1f"%(tm/self.ticks_per_beat)
+        elif self.tm_mode == TIME_SECONDS:
+          return tm/self.ticks_per_beat*self.tempo
+        #endif
+    #enddef
         
     def refresh(self):
         self.canvas.delete("all")
@@ -456,14 +610,21 @@ class TeenyComposer(tk.Tk):
         #endif
         y_tm = self.first_note_line_y - 20
         s_str = "%0.1f"%(self.start_tm,)
-        e_str = "%0.1f"%(self.end_tm,)
         self.canvas.create_text(self.note_start_x,y_tm,\
          text=s_str,anchor="w",justify="center",fill="black")
+        e_str = "%0.1f"%(self.end_tm,)
         self.canvas.create_text(self.wide-100,y_tm,text= e_str,anchor="w",justify="right",fill="black")
-        if self.start_tm == 0:
-          self.left_btn.config(state=tk.DISABLED)
-        else:
-          self.left_btn.config(state=tk.NORMAL)
+        swide = self.wide - self.note_start_x
+        b_str = "%0.1f"%(self.begin_time,)
+        self.canvas.create_text(self.note_start_x+int(swide*0.25-50),y_tm,text= b_str,anchor="w",justify="right",fill="green")
+        f_str = "%0.1f"%(self.fini_time,)
+        self.canvas.create_text(self.note_start_x+int(swide*0.75-50),y_tm,text= f_str,anchor="w",justify="right",fill="blue")
+        c_str = "%0.1f"%(self.cursor_time,)
+        self.canvas.create_text(self.note_start_x+int(swide*0.5-50),y_tm,text= c_str,anchor="w",justify="right",fill="red")
+        #if self.start_tm == 0:
+        #  self.left_btn.config(state=tk.DISABLED)
+        #else:
+        #  self.left_btn.config(state=tk.NORMAL)
         #endif
         #draw position rect
         bx1 = self.note_start_x+80
@@ -675,6 +836,7 @@ class TeenyComposer(tk.Tk):
     #enddef    
 
     def on_mouse_press(self, event):
+        self.mouse_pressed = True
         #print(dir(event))
         #print(event)
         self.note_playing = -1
@@ -735,8 +897,16 @@ class TeenyComposer(tk.Tk):
           return
         #endif
         if self.start_typ == 1 and len(parser.selected) > 0:
-          dnote = math.floor(-dy/self.note_height)
-          dtm = dx/self.x_scale
+          if not self.shift_pressed:
+            dnote = math.floor(-dy/self.note_height)
+          else:
+            dnote = 0
+          #endif  
+          if not self.control_pressed:
+            dtm = dx/self.x_scale
+          else:
+            dtm = 0
+          #endif
           if self.snap:
             dtm = dtm/self.ticks_per_beat*self.ticks_per_beat;
           #endif
@@ -744,7 +914,7 @@ class TeenyComposer(tk.Tk):
           parser.shift_selected(dtm,dnote)
           #print(f"Shift:{dtm,dnote}")
           self.refresh()
-          self.start_x += dtm*self.x_scale
+          self.start_x += dtm*self.x_scale       
           self.start_y -= dnote*self.note_height
           return
         #endif
@@ -796,6 +966,7 @@ class TeenyComposer(tk.Tk):
     #enddef
 
     def on_mouse_release(self, event):
+        self.mouse_pressed = False
         #print(self.max_note,self.min_note)
         #print(self.note_y_pos.keys())
         if self.rect:
@@ -824,24 +995,40 @@ class TeenyComposer(tk.Tk):
             if self.snap:
               tm = int(round(tm / parser.ticks_per_beat) * parser.ticks_per_beat)
             if self.control_pressed:
-              self.begin_time = tm
-              print("Begin time=",tm)
-              #if self.begin_line:
-              #  self.canvas.coords(self.begin_line, event.x, y1, event.x, y2)
+              if self.shift_pressed:
+                self.begin_time = 0
+                self.fini_time = parser.duration
+              else:
+                if self.snap:
+                  self.begin_time = round(tm / self.ticks_per_beat)*self.ticks_per_beat
+                else:
+                  self.begin_time = tm
+                #endif
+                print("Begin time=",tm)
+                #if self.begin_line:
+                #  self.canvas.coords(self.begin_line, event.x, y1, event.x, y2)
               #endif
             elif self.shift_pressed:
-              self.fini_time = tm
+              if self.snap:
+                self.fini_time = round(tm / parser.ticks_per_beat)*parser.ticks_per_beat
+              else:
+                self.fini_time = tm
+              #endif
               print("Fini time=",tm)
               #if self.fini_line:
               #  self.canvas.coords(self.fini_line, event.x, y1, event.x, y2)
               #endif
             else:
-              self.cursor_time = tm
+              if self.snap:
+                self.cursor_time = round(tm / parser.ticks_per_beat)*parser.ticks_per_beat
+              else:
+                self.cursor_time = tm
+              #endif
               #if self.play_line:
               #  self.canvas.coords(self.play_line, event.x, y1, event.x, y2)
               #endif
-              self.begin_time = 0
-              self.fini_time = parser.duration
+              #self.begin_time = 0
+              #self.fini_time = parser.duration
             #endif             
             self.play_index = parser.find_index(self.cursor_time)
             self.refresh()
@@ -1104,21 +1291,33 @@ class TeenyComposer(tk.Tk):
     #enddef  
     
     def shift_left(self):
-      if self.start_tm == 0:
-        return
-      dt = self.end_tm-self.start_tm
-      self.start_tm -= dt*0.5
-      if self.start_tm < 0:
-        self.start_tm = 0
+      dtm = self.end_tm-self.start_tm
+      if self.control_pressed:
+        self.end_tm = self.start_tm + dtm*1.1
+      elif self.shift_pressed:
+        parser.ticks_per_beat = int(parser.ticks_per_beat / 1.01)
+      else:
+        if self.start_tm == 0:
+          return
+        self.start_tm -= dtm*0.1
+        if self.start_tm < 0:
+          self.start_tm = 0
+        #endif
+        self.end_tm = self.start_tm + dtm
       #endif
-      self.end_tm = self.start_tm + dt
       self.refresh()
     #enddef
     
     def shift_right(self):
-      dt = self.end_tm-self.start_tm
-      self.start_tm += dt*0.5
-      self.end_tm = self.start_tm + dt
+      dtm = self.end_tm-self.start_tm
+      if self.control_pressed:
+        self.end_tm = self.start_tm + dtm/1.1
+      elif self.shift_pressed:
+        parser.ticks_per_beat = int(parser.ticks_per_beat * 1.01)
+      else:
+        self.start_tm += dtm*0.1
+        self.end_tm = self.start_tm + dtm
+      #endif
       self.refresh()
     #enddef
     
@@ -1219,7 +1418,15 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def stretch(self):
-      parser.stretch(self.begin_time,self.fini_time)
+      ff = (self.cursor_time-self.begin_time)/(self.fini_time-self.begin_time)
+      parser.stretch(self.begin_time,self.fini_time,ff)
+      self.fini_time = self.cursor_time
+      self.refresh()
+    #enddef
+    
+    def spread(self):
+      parser.spread(self.begin_time,self.cursor_time)
+      self.fini_time = self.cursor_time
       self.refresh()
     #enddef
     
@@ -1266,7 +1473,7 @@ class TeenyComposer(tk.Tk):
     #enddef
     
     def snap_checkbox_change(self):
-      self.snap = self.snap_pan_var.get();
+      self.snap = self.snap_var.get();
     #enddef
     
     def play_tune(self):
@@ -1369,4 +1576,5 @@ class TeenyComposer(tk.Tk):
 
 if __name__ == "__main__":
     app = TeenyComposer()
+    app.protocol("WM_DELETE_WINDOW", app.quit)
     app.mainloop()
